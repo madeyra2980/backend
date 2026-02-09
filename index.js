@@ -22,11 +22,13 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3001';
 
-// Настройка CORS: React (3001) + любой localhost в dev (Flutter Web и др.)
+// Настройка CORS: React (3001) + backend на Render + любой localhost в dev (Flutter Web и др.)
 // Для нативного Flutter (macOS/Android/iOS) CORS не применяется — запросы идут не из браузера
+const BACKEND_URL = 'https://backend-2-jbcd.onrender.com';
 const corsOrigin = (origin, cb) => {
   if (!origin) return cb(null, true); // запросы без Origin (нативное приложение, Postman)
   if (origin === FRONTEND_URL) return cb(null, origin);
+  if (origin === BACKEND_URL) return cb(null, origin);
   if (process.env.NODE_ENV !== 'production' && /^https?:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, origin);
   cb(null, false);
 };
@@ -122,7 +124,7 @@ loadAppTokens().then(() => {
     console.log('DB_NAME:', process.env.DB_NAME);
     console.log('DB_USER:', process.env.DB_USER);
     console.log('DB_PASSWORD:', process.env.DB_PASSWORD);
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
+    console.log(`🚀 Server running on ${BACKEND_URL}`);
     console.log(`📱 Frontend URL: ${FRONTEND_URL}`);
     console.log(`🔐 Session secret: ${process.env.SESSION_SECRET ? 'configured' : 'using default'}`);
     startNgrok(PORT);

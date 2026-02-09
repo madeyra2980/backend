@@ -5,13 +5,12 @@ import { findOrCreateFromGoogle, findById } from '../store/users.js';
 export function configurePassport() {
   const clientID = (process.env.GOOGLE_CLIENT_ID || '').trim();
   const clientSecret = (process.env.GOOGLE_CLIENT_SECRET || '').trim();
-  const port = process.env.PORT || 3000;
-  const baseUrl = (process.env.BACKEND_URL || `http://localhost:${port}`).replace(/\/$/, '');
+  const baseUrl = (process.env.BACKEND_URL || 'https://backend-2-jbcd.onrender.com').replace(/\/$/, '');
   // Отдельный URL для редиректа приложения (Flutter): эмулятор Android видит ПК как 10.0.2.2
   const appCallbackBase = (process.env.APP_CALLBACK_BASE_URL || baseUrl).replace(/\/$/, '');
   const callbackURL =
     process.env.GOOGLE_CALLBACK_URL ||
-    `http://localhost:${port}/auth/google/callback`;
+    'https://backend-2-jbcd.onrender.com/auth/google/callback';
   const callbackURLApp = `${appCallbackBase}/auth/google/callback/app`;
 
   console.log('OAuth redirect URIs:', { callbackURL, callbackURLApp });

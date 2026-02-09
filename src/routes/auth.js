@@ -66,8 +66,7 @@ router.get('/google', (req, res, next) => {
     return res.redirect(`${FRONTEND_URL}/?error=oauth_not_configured`);
   }
   if (req.query.app === '1') {
-    const port = process.env.PORT || 3000;
-    const appBase = (process.env.APP_CALLBACK_BASE_URL || process.env.BACKEND_URL || `http://localhost:${port}`).replace(/\/$/, '');
+    const appBase = (process.env.APP_CALLBACK_BASE_URL || process.env.BACKEND_URL || 'https://backend-2-jbcd.onrender.com').replace(/\/$/, '');
     console.log('App login: redirect_uri sent to Google =', appBase + '/auth/google/callback/app');
     passport.authenticate('google-app', { scope: ['profile', 'email'] })(req, res, next);
   } else {
@@ -90,7 +89,7 @@ router.get('/google/callback', (req, res, next) => {
 });
 
 // Callback для приложения → редирект на страницу app-redirect (оттуда открывается приложение)
-// В Google Cloud Console добавьте: http://localhost:3000/auth/google/callback/app
+// В Google Cloud Console добавьте: https://backend-2-jbcd.onrender.com/auth/google/callback/app
 router.get('/google/callback/app', (req, res, next) => {
   if (!isGoogleOAuthConfigured()) {
     return res.redirect(`${FRONTEND_URL}/?error=oauth_not_configured`);
