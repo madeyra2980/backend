@@ -1,0 +1,209 @@
+import { Router } from 'express';
+import { query } from '../db.js';
+import { requireAuth } from '../middleware/auth.js';
+import { isAllowedSpecialtyId } from '../constants/specialties.js';
+
+const router = Router();
+
+function mapOrderRow(r) {
+  const specialistName =
+    [r.specialist_first_name, r.specialist_last_name].filter(Boolean).join(' ').trim() ||
+    (r.specialist_id ? 'Специалист' : null);
+  return {
+    id: r.id,
+    customerId: r.customer_id,
+    customerName: r.customer_name,
+    specialtyId: r.specialty_id,
+    description: r.description,
+    proposedPrice: r.proposed_price != null ? parseFloat(r.proposed_price) : null,
+    preferredAt: r.preferred_at,
+    latitude: r.latitude != null ? parseFloat(r.latitude) : null,
+    longitude: r.longitude != null ? parseFloat(r.longitude) : null,
+    addressText: r.address_text,
+    status: r.status,
+    specialistId: r.specialist_id,
+    specialistName: specialistName || null,
+    specialistPhone: r.specialist_phone || null,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+// Создать заявку (заказчик)
+router.post('/', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { specialtyId, description, proposedPrice, preferredAt, latitude, longitude, addressText } = req.body;
+
+    if (!specialtyId || !isAllowedSpecialtyId(specialtyId)) {
+      return res.status(400).json({ error: 'Укажите корректную специальность (услугу)' });
+    }
+
+    const price = proposedPrice != null ? parseFloat(proposedPrice) : null;
+    const lat = latitude != null ? parseFloat(latitude) : null;
+    const lng = longitude != null ? parseFloat(longitude) : null;
+    const prefAt = preferredAt ? new Date(preferredAt) : null;
+
+    const result = await query(
+      `INSERT INTO orders (customer_id, specialty_id, description, proposed_price, preferred_at, latitude, longitude, address_text, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'open')
+       RETURNING id, customer_id, specialty_id, description, proposed_price, preferred_at, latitude, longitude, address_text, status, specialist_id, created_at, updated_at`,
+      [userId, specialtyId, description || null, price, prefAt, lat, lng, addressText || null]
+    );
+
+    const row = result.rows[0];
+    const customerName = [req.user.firstName, req.user.lastName].filter(Boolean).join(' ') || req.user.email?.split('@')[0] || 'Заказчик';
+    res.status(201).json({
+      order: mapOrderRow({ ...row, customer_name: customerName }),
+      message: 'Заявка создана',
+    });
+  } catch (err) {
+    if (err.code === '42P01') {
+      return res.status(503).json({ error: 'Таблица заявок ещё не создана. Выполните миграцию 006_create_orders_table.sql' });
+    }
+    console.error('Create order error:', err);
+    res.status(500).json({ error: 'Ошибка при создании заявки' });
+  }
+});
+
+// Список заявок: ?my=1 — мои как заказчик; иначе — доступные специалисту (open + по его специальностям)
+router.get('/', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const my = req.query.my === '1' || req.query.my === 'true';
+
+    if (my) {
+      const result = await query(
+        `SELECT o.id, o.customer_id, o.specialty_id, o.description, o.proposed_price, o.preferred_at,
+                o.latitude, o.longitude, o.address_text, o.status, o.specialist_id, o.created_at, o.updated_at,
+                (SELECT (u."firstName" || ' ' || COALESCE(u."lastName", '')) FROM users u WHERE u.id = o.customer_id) as customer_name,
+                spec."firstName" as specialist_first_name, spec."lastName" as specialist_last_name, spec.phone as specialist_phone
+         FROM orders o
+         LEFT JOIN users spec ON spec.id = o.specialist_id
+         WHERE o.customer_id = $1
+         ORDER BY o.created_at DESC`,
+        [userId]
+      );
+      return res.json({
+        orders: result.rows.map((r) => mapOrderRow({ ...r, customer_name: r.customer_name?.trim() || 'Вы' })),
+      });
+    }
+
+    const userResult = await query(
+      'SELECT specialist_specialties FROM users WHERE id = $1',
+      [userId]
+    );
+    const specialties = userResult.rows[0]?.specialist_specialties;
+    if (!Array.isArray(specialties) || specialties.length === 0) {
+      return res.json({ orders: [] });
+    }
+
+    const result = await query(
+      `SELECT o.id, o.customer_id, o.specialty_id, o.description, o.proposed_price, o.preferred_at,
+              o.latitude, o.longitude, o.address_text, o.status, o.specialist_id, o.created_at, o.updated_at,
+              (u."firstName" || ' ' || COALESCE(u."lastName", '')) as customer_name
+       FROM orders o
+       JOIN users u ON u.id = o.customer_id
+       WHERE o.status = 'open' AND o.specialty_id = ANY($1::text[])
+       ORDER BY o.created_at DESC`,
+      [specialties]
+    );
+
+    res.json({
+      orders: result.rows.map((r) => mapOrderRow({ ...r, customer_name: (r.customer_name || '').trim() || 'Заказчик' })),
+    });
+  } catch (err) {
+    if (err.code === '42P01') {
+      return res.json({ orders: [] });
+    }
+    if (err.message?.includes('column') && err.message?.includes('does not exist')) {
+      return res.json({ orders: [] });
+    }
+    console.error('List orders error:', err);
+    res.status(500).json({ error: 'Ошибка при загрузке заявок' });
+  }
+});
+
+// Одна заявка по id
+router.get('/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await query(
+      `SELECT o.id, o.customer_id, o.specialty_id, o.description, o.proposed_price, o.preferred_at,
+              o.latitude, o.longitude, o.address_text, o.status, o.specialist_id, o.created_at, o.updated_at,
+              (u."firstName" || ' ' || COALESCE(u."lastName", '')) as customer_name,
+              spec."firstName" as specialist_first_name, spec."lastName" as specialist_last_name, spec.phone as specialist_phone
+       FROM orders o
+       JOIN users u ON u.id = o.customer_id
+       LEFT JOIN users spec ON spec.id = o.specialist_id
+       WHERE o.id = $1`,
+      [id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Заявка не найдена' });
+    }
+    const r = result.rows[0];
+    res.json({ order: mapOrderRow({ ...r, customer_name: (r.customer_name || '').trim() || 'Заказчик' }) });
+  } catch (err) {
+    if (err.code === '42P01') return res.status(404).json({ error: 'Заявка не найдена' });
+    console.error('Get order error:', err);
+    res.status(500).json({ error: 'Ошибка при загрузке заявки' });
+  }
+});
+
+// Принять заявку (специалист)
+router.patch('/:id/accept', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+
+    const orderResult = await query(
+      'SELECT id, customer_id, specialty_id, status, specialist_id FROM orders WHERE id = $1',
+      [id]
+    );
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Заявка не найдена' });
+    }
+    const order = orderResult.rows[0];
+    if (order.status !== 'open') {
+      return res.status(400).json({ error: 'Заявка уже занята или закрыта' });
+    }
+
+    const userResult = await query(
+      'SELECT specialist_specialties FROM users WHERE id = $1',
+      [userId]
+    );
+    const specialties = userResult.rows[0]?.specialist_specialties || [];
+    if (!specialties.includes(order.specialty_id)) {
+      return res.status(403).json({ error: 'Вы не оказываете такую услугу' });
+    }
+
+    await query(
+      `UPDATE orders SET specialist_id = $1, status = 'accepted', updated_at = NOW() WHERE id = $2`,
+      [userId, id]
+    );
+
+    const updated = await query(
+      `SELECT o.*, (u."firstName" || ' ' || COALESCE(u."lastName", '')) as customer_name,
+              spec."firstName" as specialist_first_name, spec."lastName" as specialist_last_name, spec.phone as specialist_phone
+       FROM orders o
+       JOIN users u ON u.id = o.customer_id
+       LEFT JOIN users spec ON spec.id = o.specialist_id
+       WHERE o.id = $1`,
+      [id]
+    );
+    const r = updated.rows[0];
+    res.json({
+      order: mapOrderRow({ ...r, customer_name: (r.customer_name || '').trim() || 'Заказчик' }),
+      message: 'Вы приняли заявку',
+    });
+  } catch (err) {
+    if (err.code === '42P01') {
+      return res.status(503).json({ error: 'Таблица заявок ещё не создана' });
+    }
+    console.error('Accept order error:', err);
+    res.status(500).json({ error: 'Ошибка при принятии заявки' });
+  }
+});
+
+export default router;
