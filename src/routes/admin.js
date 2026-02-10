@@ -280,5 +280,43 @@ router.get('/organizations', async (req, res) => {
   }
 });
 
+// Список городов для админ-панели (как /cities, но без requireAuth, только admin)
+router.get('/cities', async (req, res) => {
+  try {
+    const result = await query(
+      `
+      SELECT DISTINCT TRIM(city) AS city
+      FROM (
+        SELECT specialist_city AS city
+        FROM users
+        WHERE is_specialist = true
+          AND specialist_city IS NOT NULL
+          AND TRIM(specialist_city) <> ''
+        UNION
+        SELECT city
+        FROM organizations
+        WHERE city IS NOT NULL
+          AND TRIM(city) <> ''
+      ) AS all_cities
+      WHERE TRIM(city) <> ''
+      ORDER BY city
+      `,
+      []
+    );
+
+    const cities = (result.rows || [])
+      .map((row) => (row.city || '').trim())
+      .filter((c) => c.length > 0);
+
+    res.json({ cities });
+  } catch (err) {
+    if (err.code === '42703' || (err.message && String(err.message).includes('does not exist'))) {
+      return res.json({ cities: [] });
+    }
+    console.error('Error fetching cities for admin:', err);
+    res.status(500).json({ error: 'Ошибка при загрузке списка городов' });
+  }
+});
+
 export default router;
 
