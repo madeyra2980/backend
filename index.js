@@ -8,6 +8,7 @@ import authRoutes, { setUserFromToken, loadAppTokens } from './src/routes/auth.j
 import profileRoutes from './src/routes/profile.js';
 import ordersRoutes from './src/routes/orders.js';
 import organizationsRoutes from './src/routes/organizations.js';
+import citiesRoutes from './src/routes/cities.js';
 import { SPECIALTIES } from './src/constants/specialties.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -79,6 +80,7 @@ app.use('/auth', authRoutes);
 app.use('/profile', profileRoutes);
 app.use('/orders', ordersRoutes);
 app.use('/organizations', organizationsRoutes);
+app.use('/cities', citiesRoutes);
 
 // Список специальностей (публичный, единый источник с backend)
 app.get('/specialties', (req, res) => {
