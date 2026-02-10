@@ -45,9 +45,7 @@ router.post('/specialists', async (req, res) => {
       middleName, // Отчество
       phone,
       city,
-      rating,
       password,
-      email,
     } = req.body || {};
 
     // Базовая валидация
@@ -74,58 +72,43 @@ router.post('/specialists', async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(String(password), 10);
 
-    // Рейтинг по умолчанию 0.0, но можно задать руками (0–5)
-    let ratingValue = 0.0;
-    if (rating !== undefined && rating !== null && rating !== '') {
-      const parsed = parseFloat(String(rating).replace(',', '.'));
-      if (isNaN(parsed) || parsed < 0 || parsed > 5) {
-        return res.status(400).json({ error: 'Рейтинг должен быть числом от 0 до 5' });
-      }
-      ratingValue = parsed;
-    }
-
     const id = crypto.randomUUID();
-    const finalEmail = email && String(email).trim().length > 0 ? String(email).trim() : null;
     const cityValue = city && String(city).trim().length > 0 ? String(city).trim() : null;
     const middleNameValue = middleName && String(middleName).trim().length > 0 ? String(middleName).trim() : null;
 
     const result = await query(
       `INSERT INTO users (
         id,
-        email,
         "firstName",
         "lastName",
         "middleName",
         phone,
-        rating,
         is_specialist,
         specialist_city,
         password_hash,
+        password_plain,
         "createdAt",
         "updatedAt"
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, true, $8, $9, NOW(), NOW())
+      VALUES ($1, NULL, $2, $3, $4, $5, true, $6, $7, $8, NOW(), NOW())
       RETURNING
         id,
-        email,
         "firstName",
         "lastName",
         "middleName",
         phone,
-        rating,
         is_specialist as "isSpecialist",
         specialist_city as "specialistCity"
       `,
       [
         id,
-        finalEmail,
         firstName.trim(),
         lastName.trim(),
         middleNameValue,
         phoneNormalized,
-        ratingValue,
         cityValue,
         hashedPassword,
+        String(password),
       ]
     );
 
@@ -139,9 +122,8 @@ router.post('/specialists', async (req, res) => {
         middleName: user.middleName || null,
         phone: user.phone,
         city: user.specialistCity || null,
-        rating: user.rating != null ? parseFloat(user.rating) : 0.0,
-        email: user.email || null,
         isSpecialist: !!user.isSpecialist,
+        plainPassword: String(password),
         avatar: null, // Фото по умолчанию нет
       },
     });
@@ -218,6 +200,83 @@ router.post('/organizations', async (req, res) => {
   } catch (err) {
     console.error('Error creating organization from admin:', err);
     res.status(500).json({ error: 'Ошибка при создании организации' });
+  }
+});
+
+// Список специалистов для админ-панели
+router.get('/specialists', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT
+        id,
+        "firstName",
+        "lastName",
+        "middleName",
+        phone,
+        specialist_city as "specialistCity",
+        rating,
+        password_plain,
+        "createdAt"
+      FROM users
+      WHERE is_specialist = true
+      ORDER BY "createdAt" DESC NULLS LAST, "firstName", "lastName"`,
+      []
+    );
+
+    const specialists = (result.rows || []).map((row) => ({
+      id: String(row.id),
+      firstName: row.firstName || '',
+      lastName: row.lastName || '',
+      middleName: row.middleName || '',
+      phone: row.phone || '',
+      city: row.specialistCity || '',
+      rating: row.rating != null ? parseFloat(row.rating) : 0,
+      password: row.password_plain || '',
+      createdAt: row.createdAt,
+    }));
+
+    res.json({ specialists });
+  } catch (err) {
+    console.error('Error fetching specialists for admin:', err);
+    res.status(500).json({ error: 'Ошибка при загрузке списка специалистов' });
+  }
+});
+
+// Список организаций для админ-панели
+router.get('/organizations', async (req, res) => {
+  try {
+    const result = await query(
+      `SELECT
+        id,
+        name,
+        description,
+        city,
+        address,
+        phone,
+        email,
+        created_at,
+        updated_at
+      FROM organizations
+      ORDER BY created_at DESC NULLS LAST, name`,
+      []
+    );
+
+    const organizations = (result.rows || []).map((row) => ({
+      id: row.id,
+      name: row.name || '',
+      description: row.description || '',
+      city: row.city || '',
+      address: row.address || '',
+      phone: row.phone || '',
+      email: row.email || '',
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+
+    res.json({ organizations });
+  } catch (err) {
+    console.error('Error fetching organizations for admin:', err);
+    res.status(500).json({ error: 'Ошибка при загрузке списка организаций' });
   }
 });
 

@@ -25,6 +25,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3001';
 const ADMIN_FRONTEND_URL = process.env.ADMIN_FRONTEND_URL || 'http://localhost:4000';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 // Настройка CORS: React (3001) + backend на Render + любой localhost в dev (Flutter Web и др.)
 // Для нативного Flutter (macOS/Android/iOS) CORS не применяется — запросы идут не из браузера
@@ -60,10 +61,12 @@ app.use(
     resave: false,
     saveUninitialized: false,
     cookie: {
-      secure: process.env.NODE_ENV === 'production', // HTTPS в production
+      // В проде обязательны secure + sameSite=None, чтобы куки ходили
+      // с отдельного домена админ-панели (https://backend-2-jbcd.onrender.com <-> http(s)://localhost:4000)
+      secure: IS_PRODUCTION, // HTTPS в production
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000, // 24 часа
-      sameSite: 'lax',
+      sameSite: IS_PRODUCTION ? 'none' : 'lax',
     },
   })
 );
