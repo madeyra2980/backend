@@ -310,6 +310,146 @@ router.get('/specialists', async (req, res) => {
   }
 });
 
+// Обновить специалиста
+router.put('/specialists/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      firstName,
+      lastName,
+      middleName,
+      phone,
+      city,
+      password,
+      specialties,
+    } = req.body || {};
+
+    const existingResult = await query(
+      `SELECT id FROM users WHERE id = $1 AND is_specialist = true`,
+      [id]
+    );
+    if (existingResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Специалист не найден' });
+    }
+
+    const phoneNormalized = phone != null ? String(phone).trim() : null;
+    const middleNameValue =
+      middleName && String(middleName).trim().length > 0 ? String(middleName).trim() : null;
+    const cityValue = city && String(city).trim().length > 0 ? String(city).trim() : null;
+
+    const rawSpecialties = Array.isArray(specialties) ? specialties : [];
+    const allowedSpecialties = filterAllowedSpecialtyIds(rawSpecialties);
+
+    let hashedPassword = null;
+    if (password != null && String(password).length > 0) {
+      hashedPassword = await bcrypt.hash(String(password), 10);
+    }
+
+    const fields = [];
+    const values = [];
+    let idx = 1;
+
+    if (firstName != null) {
+      fields.push(`"firstName" = $${idx++}`);
+      values.push(firstName.trim());
+    }
+    if (lastName != null) {
+      fields.push(`"lastName" = $${idx++}`);
+      values.push(lastName.trim());
+    }
+    if (middleName !== undefined) {
+      fields.push(`"middleName" = $${idx++}`);
+      values.push(middleNameValue);
+    }
+    if (phone !== undefined) {
+      fields.push(`phone = $${idx++}`);
+      values.push(phoneNormalized);
+    }
+    if (city !== undefined) {
+      fields.push(`specialist_city = $${idx++}`);
+      values.push(cityValue);
+    }
+    if (specialties !== undefined) {
+      fields.push(`specialist_specialties = $${idx++}`);
+      values.push(allowedSpecialties);
+    }
+
+    if (hashedPassword) {
+      fields.push(`password_hash = $${idx++}`);
+      values.push(hashedPassword);
+      fields.push(`password_plain = $${idx++}`);
+      values.push(String(password));
+    }
+
+    fields.push(`"updatedAt" = NOW()`);
+
+    values.push(id);
+
+    await query(
+      `UPDATE users
+       SET ${fields.join(', ')}
+       WHERE id = $${idx}`,
+      values
+    );
+
+    const updatedResult = await query(
+      `SELECT
+        id,
+        "firstName",
+        "lastName",
+        "middleName",
+        phone,
+        specialist_city as "specialistCity",
+        rating,
+        password_plain,
+        "createdAt"
+       FROM users
+       WHERE id = $1`,
+      [id]
+    );
+
+    const user = updatedResult.rows[0];
+
+    return res.json({
+      specialist: {
+        id: String(user.id),
+        firstName: user.firstName || '',
+        lastName: user.lastName || '',
+        middleName: user.middleName || '',
+        phone: user.phone || '',
+        city: user.specialistCity || '',
+        rating: user.rating != null ? parseFloat(user.rating) : 0,
+        password: user.password_plain || '',
+        createdAt: user.createdAt,
+      },
+    });
+  } catch (err) {
+    console.error('Error updating specialist from admin:', err);
+    res.status(500).json({ error: 'Ошибка при обновлении специалиста' });
+  }
+});
+
+// Удалить специалиста
+router.delete('/specialists/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await query(
+      'DELETE FROM users WHERE id = $1 AND is_specialist = true RETURNING id',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Специалист не найден' });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Error deleting specialist from admin:', err);
+    res.status(500).json({ error: 'Ошибка при удалении специалиста' });
+  }
+});
+
 // Список организаций для админ-панели
 router.get('/organizations', async (req, res) => {
   try {
@@ -345,6 +485,124 @@ router.get('/organizations', async (req, res) => {
   } catch (err) {
     console.error('Error fetching organizations for admin:', err);
     res.status(500).json({ error: 'Ошибка при загрузке списка организаций' });
+  }
+});
+
+// Обновить организацию
+router.put('/organizations/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, city, address, phone, email } = req.body || {};
+
+    const existing = await query(
+      'SELECT id FROM organizations WHERE id = $1',
+      [id]
+    );
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Организация не найдена' });
+    }
+
+    const fields = [];
+    const values = [];
+    let idx = 1;
+
+    if (name != null) {
+      fields.push(`name = $${idx++}`);
+      values.push(name.trim());
+    }
+    if (description !== undefined) {
+      const descValue =
+        description && String(description).trim().length > 0 ? String(description).trim() : null;
+      fields.push(`description = $${idx++}`);
+      values.push(descValue);
+    }
+    if (city !== undefined) {
+      const cityValue = city && String(city).trim().length > 0 ? String(city).trim() : null;
+      fields.push(`city = $${idx++}`);
+      values.push(cityValue);
+    }
+    if (address !== undefined) {
+      const addressValue = address && String(address).trim().length > 0 ? String(address).trim() : null;
+      fields.push(`address = $${idx++}`);
+      values.push(addressValue);
+    }
+    if (phone !== undefined) {
+      const phoneValue = phone && String(phone).trim().length > 0 ? String(phone).trim() : null;
+      fields.push(`phone = $${idx++}`);
+      values.push(phoneValue);
+    }
+    if (email !== undefined) {
+      const emailValue = email && String(email).trim().length > 0 ? String(email).trim() : null;
+      fields.push(`email = $${idx++}`);
+      values.push(emailValue);
+    }
+
+    fields.push('updated_at = NOW()');
+
+    values.push(id);
+
+    await query(
+      `UPDATE organizations
+       SET ${fields.join(', ')}
+       WHERE id = $${idx}`,
+      values
+    );
+
+    const result = await query(
+      `SELECT
+        id,
+        name,
+        description,
+        city,
+        address,
+        phone,
+        email,
+        created_at,
+        updated_at
+       FROM organizations
+       WHERE id = $1`,
+      [id]
+    );
+
+    const org = result.rows[0];
+
+    return res.json({
+      organization: {
+        id: org.id,
+        name: org.name || '',
+        description: org.description || '',
+        city: org.city || '',
+        address: org.address || '',
+        phone: org.phone || '',
+        email: org.email || '',
+        createdAt: org.created_at,
+        updatedAt: org.updated_at,
+      },
+    });
+  } catch (err) {
+    console.error('Error updating organization from admin:', err);
+    res.status(500).json({ error: 'Ошибка при обновлении организации' });
+  }
+});
+
+// Удалить организацию
+router.delete('/organizations/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const result = await query(
+      'DELETE FROM organizations WHERE id = $1 RETURNING id',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Организация не найдена' });
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('Error deleting organization from admin:', err);
+    res.status(500).json({ error: 'Ошибка при удалении организации' });
   }
 });
 
