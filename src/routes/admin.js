@@ -4,6 +4,7 @@ import crypto from 'crypto';
 import { query } from '../db.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { CITIES } from '../constants/cities.js';
+import { filterAllowedSpecialtyIds, SPECIALTIES } from '../constants/specialties.js';
 
 const router = Router();
 
@@ -39,6 +40,11 @@ router.get('/cities', (req, res) => {
   res.json({ cities: CITIES });
 });
 
+// Статичный список специальностей (для чекбоксов в админке)
+router.get('/specialties', (req, res) => {
+  res.json({ specialties: SPECIALTIES });
+});
+
 // Все роуты ниже — только для администратора
 router.use(requireAdmin);
 
@@ -52,6 +58,7 @@ router.post('/specialists', async (req, res) => {
       phone,
       city,
       password,
+      specialties,
     } = req.body || {};
 
     // Базовая валидация
@@ -70,6 +77,10 @@ router.post('/specialists', async (req, res) => {
 
     const phoneNormalized = String(phone).trim();
 
+    // Специальности: фильтруем по разрешённому списку
+    const rawSpecialties = Array.isArray(specialties) ? specialties : [];
+    const allowedSpecialties = filterAllowedSpecialtyIds(rawSpecialties);
+
     // Проверяем, нет ли уже пользователя с таким телефоном
     const existing = await query('SELECT id FROM users WHERE phone = $1 LIMIT 1', [phoneNormalized]);
     if (existing.rows.length > 0) {
@@ -82,41 +93,90 @@ router.post('/specialists', async (req, res) => {
     const cityValue = city && String(city).trim().length > 0 ? String(city).trim() : null;
     const middleNameValue = middleName && String(middleName).trim().length > 0 ? String(middleName).trim() : null;
 
-    const result = await query(
-      `INSERT INTO users (
-        id,
-        "firstName",
-        "lastName",
-        "middleName",
-        phone,
-        is_specialist,
-        specialist_city,
-        password_hash,
-        password_plain,
-        "createdAt",
-        "updatedAt"
-      )
-      VALUES ($1, NULL, $2, $3, $4, $5, true, $6, $7, $8, NOW(), NOW())
-      RETURNING
-        id,
-        "firstName",
-        "lastName",
-        "middleName",
-        phone,
-        is_specialist as "isSpecialist",
-        specialist_city as "specialistCity"
-      `,
-      [
-        id,
-        firstName.trim(),
-        lastName.trim(),
-        middleNameValue,
-        phoneNormalized,
-        cityValue,
-        hashedPassword,
-        String(password),
-      ]
-    );
+    let result;
+    try {
+      // Основной вариант: с колонкой password_plain
+      result = await query(
+        `INSERT INTO users (
+          id,
+          "firstName",
+          "lastName",
+          "middleName",
+          phone,
+          is_specialist,
+          specialist_city,
+          specialist_specialties,
+          password_hash,
+          password_plain,
+          "createdAt",
+          "updatedAt"
+        )
+        VALUES ($1, NULL, $2, $3, $4, $5, true, $6, $7, $8, NOW(), NOW())
+        RETURNING
+          id,
+          "firstName",
+          "lastName",
+          "middleName",
+          phone,
+          is_specialist as "isSpecialist",
+          specialist_city as "specialistCity",
+          specialist_specialties as "specialistSpecialties"
+        `,
+        [
+          id,
+          firstName.trim(),
+          lastName.trim(),
+          middleNameValue,
+          phoneNormalized,
+          cityValue,
+          allowedSpecialties,
+          hashedPassword,
+          String(password),
+        ]
+      );
+    } catch (err) {
+      // Если на проде ещё нет колонки password_plain — вставляем без неё
+      if (err.code === '42703' || (err.message && String(err.message).includes('password_plain'))) {
+        result = await query(
+          `INSERT INTO users (
+            id,
+            "firstName",
+            "lastName",
+            "middleName",
+            phone,
+            is_specialist,
+            specialist_city,
+            specialist_specialties,
+            password_hash,
+            "createdAt",
+            "updatedAt"
+          )
+          VALUES ($1, NULL, $2, $3, $4, $5, true, $6, $7, NOW(), NOW())
+          RETURNING
+            id,
+            "firstName",
+            "lastName",
+            "middleName",
+            phone,
+            is_specialist as "isSpecialist",
+            specialist_city as "specialistCity",
+            specialist_specialties as "specialistSpecialties"
+          `,
+          [
+            id,
+            firstName.trim(),
+            lastName.trim(),
+            middleNameValue,
+            phoneNormalized,
+            cityValue,
+            allowedSpecialties,
+            hashedPassword,
+          ]
+        );
+      } else {
+        throw err;
+      }
+    }
 
     const user = result.rows[0];
 
@@ -129,6 +189,8 @@ router.post('/specialists', async (req, res) => {
         phone: user.phone,
         city: user.specialistCity || null,
         isSpecialist: !!user.isSpecialist,
+        specialties: Array.isArray(user.specialistSpecialties) ? user.specialistSpecialties : allowedSpecialties,
+        // Даже если password_plain не сохранился в БД, для админа возвращаем введённый пароль
         plainPassword: String(password),
         avatar: null, // Фото по умолчанию нет
       },
