@@ -111,7 +111,7 @@ router.post('/specialists', async (req, res) => {
           "createdAt",
           "updatedAt"
         )
-        VALUES ($1, NULL, $2, $3, $4, $5, true, $6, $7, $8, NOW(), NOW())
+        VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, $9, NOW(), NOW())
         RETURNING
           id,
           "firstName",
@@ -151,7 +151,7 @@ router.post('/specialists', async (req, res) => {
             "createdAt",
             "updatedAt"
           )
-          VALUES ($1, NULL, $2, $3, $4, $5, true, $6, $7, NOW(), NOW())
+          VALUES ($1, $2, $3, $4, $5, true, $6, $7, $8, NOW(), NOW())
           RETURNING
             id,
             "firstName",
