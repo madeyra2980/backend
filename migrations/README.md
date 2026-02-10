@@ -73,3 +73,8 @@ docker exec -i komek-postgres psql -U komek_user -d komek_db < backend/migration
 
 Создаёт раздел организаций:
 - Таблица `organizations`: id, name, description, city, address, phone, email, created_at, updated_at
+
+### 009_create_cities_table.sql
+
+Создаёт справочник городов:
+- Таблица `cities`: id, name, country_code (статичный список городов РК)
