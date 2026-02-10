@@ -24,6 +24,7 @@ if (!process.env.GOOGLE_CLIENT_ID) {
 const app = express();
 const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3001';
+const ADMIN_FRONTEND_URL = process.env.ADMIN_FRONTEND_URL || 'http://localhost:4000';
 
 // Настройка CORS: React (3001) + backend на Render + любой localhost в dev (Flutter Web и др.)
 // Для нативного Flutter (macOS/Android/iOS) CORS не применяется — запросы идут не из браузера
@@ -32,6 +33,7 @@ const corsOrigin = (origin, cb) => {
   if (!origin) return cb(null, true); // запросы без Origin (нативное приложение, Postman)
   if (origin === FRONTEND_URL) return cb(null, origin);
   if (origin === BACKEND_URL) return cb(null, origin);
+  if (origin === ADMIN_FRONTEND_URL) return cb(null, origin);
   if (process.env.NODE_ENV !== 'production' && /^https?:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, origin);
   cb(null, false);
 };
