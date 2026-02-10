@@ -7,6 +7,7 @@ import { configurePassport } from './src/config/passport.js';
 import authRoutes, { setUserFromToken, loadAppTokens } from './src/routes/auth.js';
 import profileRoutes from './src/routes/profile.js';
 import ordersRoutes from './src/routes/orders.js';
+import organizationsRoutes from './src/routes/organizations.js';
 import { SPECIALTIES } from './src/constants/specialties.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -77,6 +78,7 @@ app.use(setUserFromToken);
 app.use('/auth', authRoutes);
 app.use('/profile', profileRoutes);
 app.use('/orders', ordersRoutes);
+app.use('/organizations', organizationsRoutes);
 
 // Список специальностей (публичный, единый источник с backend)
 app.get('/specialties', (req, res) => {
@@ -129,4 +131,4 @@ loadAppTokens().then(() => {
     console.log(`🔐 Session secret: ${process.env.SESSION_SECRET ? 'configured' : 'using default'}`);
     startNgrok(PORT);
   });
-});
+}); 

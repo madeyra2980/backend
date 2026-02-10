@@ -95,6 +95,7 @@ function normalizeProfileRow(row) {
     specialistBio: row.specialist_bio ?? null,
     specialistSince: row.specialist_since ?? null,
     specialistSpecialties: Array.isArray(row.specialist_specialties) ? row.specialist_specialties : [],
+    specialistCity: row.specialist_city ?? null,
     createdAt: row.createdAt ?? row.created_at ?? null,
     updatedAt: row.updatedAt ?? row.updated_at ?? null,
   };
@@ -111,6 +112,7 @@ router.get('/me', requireAuth, async (req, res) => {
           id, email, "firstName", "lastName", phone, document_photo, avatar, google_avatar,
           rating, account_id, is_specialist as "isSpecialist", specialist_bio as "specialistBio",
           specialist_since as "specialistSince", specialist_specialties as "specialistSpecialties",
+          specialist_city as "specialistCity",
           "createdAt", "updatedAt"
         FROM users WHERE id = $1`,
         [userId]
@@ -182,6 +184,7 @@ router.get('/me', requireAuth, async (req, res) => {
         specialistBio: user.specialistBio || null,
         specialistSince: user.specialistSince || null,
         specialistSpecialties: Array.isArray(user.specialistSpecialties) ? user.specialistSpecialties : [],
+        specialistCity: user.specialistCity || null,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
@@ -368,7 +371,7 @@ router.put('/me', requireAuth, async (req, res) => {
 router.patch('/me/specialist', requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
-    const { isSpecialist, specialistBio, specialistSpecialties } = req.body;
+    const { isSpecialist, specialistBio, specialistSpecialties, specialistCity } = req.body;
 
     if (typeof isSpecialist !== 'boolean') {
       return res.status(400).json({ error: 'Укажите isSpecialist (true/false)' });
@@ -376,6 +379,7 @@ router.patch('/me/specialist', requireAuth, async (req, res) => {
 
     const rawSpec = Array.isArray(specialistSpecialties) ? specialistSpecialties : [];
     const allowedSpec = filterAllowedSpecialtyIds(rawSpec);
+    const city = specialistCity !== undefined ? (specialistCity === null || specialistCity === '' ? null : String(specialistCity).trim()) : undefined;
 
     let result;
     try {
@@ -385,13 +389,14 @@ router.patch('/me/specialist', requireAuth, async (req, res) => {
              specialist_bio = COALESCE($2, specialist_bio),
              specialist_since = CASE WHEN $1 = true AND specialist_since IS NULL THEN NOW() ELSE specialist_since END,
              specialist_specialties = $3,
+             specialist_city = CASE WHEN $5::boolean THEN $4 ELSE specialist_city END,
              "updatedAt" = NOW()
-         WHERE id = $4
+         WHERE id = $6
          RETURNING 
            id, email, "firstName", "lastName", phone, document_photo, avatar, google_avatar,
-           rating, account_id, is_specialist as "isSpecialist", specialist_bio as "specialistBio", specialist_since as "specialistSince", specialist_specialties as "specialistSpecialties",
+           rating, account_id, is_specialist as "isSpecialist", specialist_bio as "specialistBio", specialist_since as "specialistSince", specialist_specialties as "specialistSpecialties", specialist_city as "specialistCity",
            "createdAt", "updatedAt"`,
-        [isSpecialist, specialistBio === undefined ? null : String(specialistBio || ''), allowedSpec, userId]
+        [isSpecialist, specialistBio === undefined ? null : String(specialistBio || ''), allowedSpec, city ?? null, city !== undefined, userId]
       );
     } catch (err) {
       if (err.message.includes('column') && err.message.includes('does not exist')) {
@@ -401,13 +406,14 @@ router.patch('/me/specialist', requireAuth, async (req, res) => {
                specialist_bio = COALESCE($2, specialist_bio),
                specialist_since = CASE WHEN $1 = true AND specialist_since IS NULL THEN NOW() ELSE specialist_since END,
                specialist_specialties = $3,
+               specialist_city = CASE WHEN $5::boolean THEN $4 ELSE specialist_city END,
                updated_at = NOW()
-           WHERE id = $4
+           WHERE id = $6
            RETURNING 
              id, email, first_name as "firstName", last_name as "lastName", phone, document_photo, avatar, google_avatar,
-             rating, account_id, is_specialist as "isSpecialist", specialist_bio as "specialistBio", specialist_since as "specialistSince",
+             rating, account_id, is_specialist as "isSpecialist", specialist_bio as "specialistBio", specialist_since as "specialistSince", specialist_specialties as "specialistSpecialties", specialist_city as "specialistCity",
              created_at as "createdAt", updated_at as "updatedAt"`,
-          [isSpecialist, specialistBio === undefined ? null : String(specialistBio || ''), allowedSpec, userId]
+          [isSpecialist, specialistBio === undefined ? null : String(specialistBio || ''), allowedSpec, city ?? null, city !== undefined, userId]
         );
       } else {
         throw err;
@@ -447,6 +453,7 @@ router.patch('/me/specialist', requireAuth, async (req, res) => {
         specialistBio: user.specialistBio || null,
         specialistSince: user.specialistSince || null,
         specialistSpecialties: Array.isArray(user.specialistSpecialties) ? user.specialistSpecialties : [],
+        specialistCity: user.specialistCity || null,
         createdAt: user.createdAt,
         updatedAt: user.updatedAt,
       },
@@ -850,19 +857,45 @@ router.get('/locations', requireAuth, async (req, res) => {
   }
 });
 
-// Список специалистов с рейтингом (для раздела «Специалисты»)
+// Список специалистов с рейтингом (для раздела «Специалисты»). Поиск по городу: ?city=...
 router.get('/specialists', requireAuth, async (req, res) => {
   try {
-    const result = await query(
-      `SELECT 
-        id, "firstName", "lastName", phone,
-        rating, specialist_bio as "specialistBio", specialist_specialties as "specialistSpecialties",
-        specialist_since as "specialistSince", avatar, google_avatar as "googleAvatar"
-       FROM users
-       WHERE is_specialist = true
-       ORDER BY rating DESC NULLS LAST, "firstName", "lastName"`,
-      []
-    );
+    const city = typeof req.query.city === 'string' ? req.query.city.trim() : null;
+    const hasCityFilter = city && city.length > 0;
+    let result;
+    try {
+      if (hasCityFilter) {
+        result = await query(
+          `SELECT 
+            id, "firstName", "lastName", phone,
+            rating, specialist_bio as "specialistBio", specialist_specialties as "specialistSpecialties",
+            specialist_since as "specialistSince", specialist_city as "specialistCity",
+            avatar, google_avatar as "googleAvatar"
+           FROM users
+           WHERE is_specialist = true AND (specialist_city IS NOT NULL AND LOWER(TRIM(specialist_city)) = LOWER($1))
+           ORDER BY rating DESC NULLS LAST, "firstName", "lastName"`,
+          [city]
+        );
+      } else {
+        result = await query(
+          `SELECT 
+            id, "firstName", "lastName", phone,
+            rating, specialist_bio as "specialistBio", specialist_specialties as "specialistSpecialties",
+            specialist_since as "specialistSince", specialist_city as "specialistCity",
+            avatar, google_avatar as "googleAvatar"
+           FROM users
+           WHERE is_specialist = true
+           ORDER BY rating DESC NULLS LAST, "firstName", "lastName"`,
+          []
+        );
+      }
+    } catch (err) {
+      if (err.code === '42703' || (err.message && String(err.message).includes('does not exist'))) {
+        result = { rows: [] };
+      } else {
+        throw err;
+      }
+    }
     const specialists = (result.rows || []).map((row) => {
       const fullName = [row.firstName, row.lastName].filter(Boolean).join(' ').trim() || 'Специалист';
       return {
@@ -875,6 +908,7 @@ router.get('/specialists', requireAuth, async (req, res) => {
         specialistBio: row.specialistBio ?? null,
         specialistSpecialties: Array.isArray(row.specialistSpecialties) ? row.specialistSpecialties : [],
         specialistSince: row.specialistSince ?? null,
+        specialistCity: row.specialistCity ?? null,
         avatar: row.avatar ?? null,
         googleAvatar: row.googleAvatar ?? null,
       };

@@ -63,3 +63,13 @@ docker exec -i komek-postgres psql -U komek_user -d komek_db < backend/migration
 
 Добавляет выбор специальностей у специалиста (чекбоксы из списка):
 - `specialist_specialties` - массив кодов выбранных специальностей (TEXT[])
+
+### 007_add_specialist_city.sql
+
+Добавляет город специалиста для поиска и карточки:
+- `specialist_city` - город специалиста (VARCHAR)
+
+### 008_create_organizations_table.sql
+
+Создаёт раздел организаций:
+- Таблица `organizations`: id, name, description, city, address, phone, email, created_at, updated_at
