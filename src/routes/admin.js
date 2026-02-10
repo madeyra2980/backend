@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { query } from '../db.js';
 import { requireAdmin } from '../middleware/auth.js';
+import { CITIES } from '../constants/cities.js';
 
 const router = Router();
 
@@ -31,6 +32,11 @@ router.post('/logout', (req, res) => {
     delete req.session.adminLoggedInAt;
   }
   res.json({ ok: true });
+});
+
+// Статичный список городов для админ-панели (как specialties)
+router.get('/cities', (req, res) => {
+  res.json({ cities: CITIES });
 });
 
 // Все роуты ниже — только для администратора
@@ -277,44 +283,6 @@ router.get('/organizations', async (req, res) => {
   } catch (err) {
     console.error('Error fetching organizations for admin:', err);
     res.status(500).json({ error: 'Ошибка при загрузке списка организаций' });
-  }
-});
-
-// Список городов для админ-панели (как /cities, но без requireAuth, только admin)
-router.get('/cities', async (req, res) => {
-  try {
-    const result = await query(
-      `
-      SELECT DISTINCT TRIM(city) AS city
-      FROM (
-        SELECT specialist_city AS city
-        FROM users
-        WHERE is_specialist = true
-          AND specialist_city IS NOT NULL
-          AND TRIM(specialist_city) <> ''
-        UNION
-        SELECT city
-        FROM organizations
-        WHERE city IS NOT NULL
-          AND TRIM(city) <> ''
-      ) AS all_cities
-      WHERE TRIM(city) <> ''
-      ORDER BY city
-      `,
-      []
-    );
-
-    const cities = (result.rows || [])
-      .map((row) => (row.city || '').trim())
-      .filter((c) => c.length > 0);
-
-    res.json({ cities });
-  } catch (err) {
-    if (err.code === '42703' || (err.message && String(err.message).includes('does not exist'))) {
-      return res.json({ cities: [] });
-    }
-    console.error('Error fetching cities for admin:', err);
-    res.status(500).json({ error: 'Ошибка при загрузке списка городов' });
   }
 });
 
