@@ -62,28 +62,41 @@ export async function loadAppTokens() {
 // Запуск входа через Google
 // ?app=1 — используется отдельный callback /auth/google/callback/app → редирект в приложение (komek://)
 router.get('/google', (req, res, next) => {
+  console.log('[Auth] /auth/google start | app=', req.query.app, '| ua=', req.headers['user-agent']);
   if (!isGoogleOAuthConfigured()) {
+    console.warn('[Auth] /auth/google blocked: Google OAuth is not configured');
     return res.redirect(`${FRONTEND_URL}/?error=oauth_not_configured`);
   }
   if (req.query.app === '1') {
     const appBase = (process.env.APP_CALLBACK_BASE_URL || process.env.BACKEND_URL || 'https://backend-2-jbcd.onrender.com').replace(/\/$/, '');
-    console.log('App login: redirect_uri sent to Google =', appBase + '/auth/google/callback/app');
+    console.log('[Auth] App login: redirect_uri sent to Google =', appBase + '/auth/google/callback/app');
     passport.authenticate('google-app', { scope: ['profile', 'email'] })(req, res, next);
   } else {
+    console.log('[Auth] Web login: redirect_uri will be', process.env.GOOGLE_CALLBACK_URL || 'https://backend-2-jbcd.onrender.com/auth/google/callback');
     passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
   }
 });
 
 // Callback для веба (редирект на FRONTEND_URL)
 router.get('/google/callback', (req, res, next) => {
+  console.log('[Auth] /auth/google/callback hit | ua=', req.headers['user-agent']);
   if (!isGoogleOAuthConfigured()) {
+    console.warn('[Auth] /auth/google/callback blocked: Google OAuth is not configured');
     return res.redirect(`${FRONTEND_URL}/?error=oauth_not_configured`);
   }
   passport.authenticate('google', {
     session: true,
     failureRedirect: `${FRONTEND_URL}/?error=auth_failed`,
   })(req, res, (err) => {
-    if (err) return next(err);
+    if (err) {
+      console.error('[Auth] /auth/google/callback error:', err.message);
+      return next(err);
+    }
+    if (!req.user) {
+      console.warn('[Auth] /auth/google/callback: req.user is empty, redirecting with error');
+    } else {
+      console.log('[Auth] /auth/google/callback success for user', req.user.id);
+    }
     res.redirect(`${FRONTEND_URL}/?logged=1`);
   });
 });
@@ -91,15 +104,21 @@ router.get('/google/callback', (req, res, next) => {
 // Callback для приложения → редирект на страницу app-redirect (оттуда открывается приложение)
 // В Google Cloud Console добавьте: https://backend-2-jbcd.onrender.com/auth/google/callback/app
 router.get('/google/callback/app', (req, res, next) => {
+  console.log('[Auth] /auth/google/callback/app hit | ua=', req.headers['user-agent']);
   if (!isGoogleOAuthConfigured()) {
+    console.warn('[Auth] /auth/google/callback/app blocked: Google OAuth is not configured');
     return res.redirect(`${FRONTEND_URL}/?error=oauth_not_configured`);
   }
   passport.authenticate('google-app', {
     session: true,
     failureRedirect: `${FRONTEND_URL}/?error=auth_failed`,
   })(req, res, async (err) => {
-    if (err) return next(err);
+    if (err) {
+      console.error('[Auth] /auth/google/callback/app error:', err.message);
+      return next(err);
+    }
     if (!req.user) {
+      console.warn('[Auth] /auth/google/callback/app: req.user is empty, redirecting with error');
       return res.redirect(`${FRONTEND_URL}/?error=auth_failed`);
     }
     const token = generateAppToken();
@@ -108,7 +127,7 @@ router.get('/google/callback/app', (req, res, next) => {
       expiresAt: Date.now() + 24 * 60 * 60 * 1000,
     });
     await persistAppTokens();
-    console.log('[Auth] App token saved for user', req.user.id, '| store size:', appTokenStore.size);
+    console.log('[Auth] App token saved for user', req.user.id, '| token prefix:', token.slice(0, 8), '... | store size:', appTokenStore.size);
     res.redirect(`/auth/app-redirect?token=${encodeURIComponent(token)}`);
   });
 });
@@ -117,23 +136,34 @@ router.get('/google/callback/app', (req, res, next) => {
 router.get('/app-redirect', (req, res) => {
   const token = String(req.query.token || '').trim();
   if (!token) {
+    console.warn('[Auth] /auth/app-redirect without token, redirecting with error');
     return res.redirect(`${FRONTEND_URL}/?error=missing_token`);
   }
   const webUrl = process.env.APP_REDIRECT_WEB_URL || '';
   if (webUrl) {
     const base = webUrl.replace(/\/$/, '');
+    console.log('[Auth] /auth/app-redirect → web | token prefix:', token.slice(0, 8), '... | redirectTo=', `${base}/#/login?token=...`);
     return res.redirect(`${base}/#/login?token=${encodeURIComponent(token)}`);
   }
   const appUrl = `${APP_REDIRECT_SCHEME}://login?token=${encodeURIComponent(token)}`;
+  console.log('[Auth] /auth/app-redirect → app | scheme=', APP_REDIRECT_SCHEME, '| token prefix:', token.slice(0, 8), '... | redirectTo=', appUrl);
   res.redirect(appUrl);
 });
 
 // Выход
 router.post('/logout', (req, res, next) => {
+  console.log('[Auth] /auth/logout called | ua=', req.headers['user-agent']);
   req.logout((err) => {
-    if (err) return next(err);
+    if (err) {
+      console.error('[Auth] /auth/logout error during logout:', err.message);
+      return next(err);
+    }
     req.session.destroy((err2) => {
-      if (err2) return next(err2);
+      if (err2) {
+        console.error('[Auth] /auth/logout error destroying session:', err2.message);
+        return next(err2);
+      }
+      console.log('[Auth] /auth/logout success');
       res.json({ ok: true });
     });
   });
@@ -143,21 +173,36 @@ router.post('/logout', (req, res, next) => {
 export function setUserFromToken(req, res, next) {
   if (req.user) return next();
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) return next();
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    console.log('[Auth] setUserFromToken: no Bearer header for', req.method, req.originalUrl, '| ua=', req.headers['user-agent']);
+    return next();
+  }
   const token = authHeader.slice(7);
   const entry = appTokenStore.get(token);
   if (!entry || Date.now() > entry.expiresAt) {
-    if (process.env.NODE_ENV !== 'production') {
-      console.log('[Auth] Bearer token present, in store:', !!entry, 'expired:', entry ? Date.now() > entry.expiresAt : 'n/a');
-    }
+    console.warn(
+      '[Auth] setUserFromToken: invalid or expired token for',
+      req.method,
+      req.originalUrl,
+      '| inStore=',
+      !!entry,
+      '| expired=',
+      entry ? Date.now() > entry.expiresAt : 'n/a',
+      '| ua=',
+      req.headers['user-agent']
+    );
     return next();
   }
   findById(entry.userId)
     .then((user) => {
       req.user = user;
-      if (process.env.NODE_ENV !== 'production' && (req.path === '/me' || req.originalUrl.includes('/profile/me'))) {
-        console.log('[Auth] req.user set for', req.method, req.originalUrl);
-      }
+      console.log(
+        '[Auth] setUserFromToken: req.user set for',
+        req.method,
+        req.originalUrl,
+        '| userId=',
+        user && user.id ? String(user.id) : 'unknown'
+      );
       next();
     })
     .catch((err) => {
@@ -197,6 +242,7 @@ router.get('/me', (req, res) => {
       avatarUrl = user.picture;
     }
     
+    console.log('[Auth] /auth/me success for user', String(user.id));
     return res.json({ 
       user: { 
         id: String(user.id), 
@@ -208,6 +254,12 @@ router.get('/me', (req, res) => {
       } 
     });
   }
+  console.warn(
+    '[Auth] /auth/me unauthorized | authHeader=',
+    req.headers.authorization || '',
+    '| ua=',
+    req.headers['user-agent']
+  );
   res.status(401).json({ user: null });
 });
 
