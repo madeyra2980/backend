@@ -24,7 +24,7 @@ psql -h localhost -p 5433 -U komek_user -d komek_db -f migrations/003_add_user_a
 psql -h localhost -p 5433 -U komek_user -d komek_db -f migrations/004_add_specialist_fields.sql
 psql -h localhost -p 5433 -U komek_user -d komek_db -f migrations/005_add_specialist_specialties.sql
 ```
-
+    
 Порт `5433` и пароль — как в вашем `backend/.env` (DB_PORT, DB_USER, пароль в переменной окружения или в коде db.js). Если БД на порту 5432 (Docker), замените `-p 5433` на `-p 5432`.
 
 ### Через Docker (если БД в контейнере)
