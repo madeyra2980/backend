@@ -225,7 +225,7 @@ router.get('/app-redirect', (req, res) => {
   if (isYandex) {
     const intentUrl = `intent://login?token=${encodeURIComponent(
       token
-    )}#Intent;scheme=${APP_REDIRECT_SCHEME};package=com.example.komek_app;end;`;
+    )}#Intent;scheme=${APP_REDIRECT_SCHEME};package=kz.komek.app;end;`;
     console.log(
       '[Auth] /auth/app-redirect → intent for Yandex | token prefix:',
       token.slice(0, 8),
