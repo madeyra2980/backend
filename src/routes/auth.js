@@ -4,7 +4,8 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { findById } from '../store/users.js';
+import { OAuth2Client } from 'google-auth-library';
+import { findById, findOrCreateFromGoogle } from '../store/users.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
@@ -21,6 +22,8 @@ const APP_TOKENS_FILE = path.join(__dirname, '../../data/app-tokens.json');
 
 // Токены для мобильного/десктоп приложения (срок 24 часа), загружаются из файла при старте
 const appTokenStore = new Map(); // token -> { userId, expiresAt }
+
+const googleClient = new OAuth2Client((process.env.GOOGLE_CLIENT_ID || '').trim());
 
 function generateAppToken() {
   return crypto.randomBytes(32).toString('hex');
@@ -132,6 +135,78 @@ router.get('/google/callback/app', (req, res, next) => {
   });
 });
 
+// Прямая авторизация из мобильного приложения по Google ID token (без браузерного редиректа и deep-link)
+router.post('/google/mobile-signin', async (req, res) => {
+  try {
+    const idToken = String(req.body.idToken || '').trim();
+    if (!idToken) {
+      return res.status(400).json({ error: 'idToken is required' });
+    }
+
+    const clientId = (process.env.GOOGLE_CLIENT_ID || '').trim();
+    if (!clientId) {
+      console.warn('[Auth] /auth/google/mobile-signin: GOOGLE_CLIENT_ID is not configured');
+      return res.status(500).json({ error: 'Google OAuth is not configured' });
+    }
+
+    const ticket = await googleClient.verifyIdToken({
+      idToken,
+      audience: clientId,
+    });
+    const payload = ticket.getPayload();
+    if (!payload) {
+      console.warn('[Auth] /auth/google/mobile-signin: empty payload from Google');
+      return res.status(401).json({ error: 'Invalid Google token' });
+    }
+
+    const profile = {
+      id: payload.sub,
+      displayName: payload.name || '',
+      emails: payload.email ? [{ value: payload.email }] : [],
+      photos: payload.picture ? [{ value: payload.picture }] : [],
+    };
+
+    const user = await findOrCreateFromGoogle(profile);
+
+    const token = generateAppToken();
+    appTokenStore.set(token, {
+      userId: user.id,
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+    });
+    await persistAppTokens();
+
+    console.log(
+      '[Auth] /auth/google/mobile-signin success for user',
+      user.id,
+      '| token prefix:',
+      token.slice(0, 8),
+      '... | store size:',
+      appTokenStore.size
+    );
+
+    const nameFromDb =
+      user.name ||
+      user.full_name ||
+      user.firstName ||
+      user.first_name ||
+      payload.name ||
+      '';
+
+    return res.json({
+      token,
+      user: {
+        id: String(user.id),
+        email: user.email || payload.email || '',
+        name: nameFromDb || (payload.email ? payload.email.split('@')[0] : 'User'),
+        picture: user.google_avatar || user.picture || payload.picture || null,
+      },
+    });
+  } catch (err) {
+    console.error('[Auth] /auth/google/mobile-signin error:', err.message);
+    return res.status(500).json({ error: 'Google sign-in failed' });
+  }
+});
+
 // После OAuth — редирект в приложение: komek:// для нативных или URL для веба (APP_REDIRECT_WEB_URL)
 router.get('/app-redirect', (req, res) => {
   const token = String(req.query.token || '').trim();
@@ -139,6 +214,27 @@ router.get('/app-redirect', (req, res) => {
     console.warn('[Auth] /auth/app-redirect without token, redirecting with error');
     return res.redirect(`${FRONTEND_URL}/?error=missing_token`);
   }
+  const ua = req.headers['user-agent'] || '';
+  const isYandex =
+    typeof ua === 'string' &&
+    /YaBrowser|YaSearchBrowser|YaApp_Android|YandexSearch/i.test(ua);
+
+  // Специальный кейс для Яндекс-браузера/поиска на Android:
+  // некоторые версии блокируют прямые схемы komek://,
+  // но поддерживают intent:// с указанием package.
+  if (isYandex) {
+    const intentUrl = `intent://login?token=${encodeURIComponent(
+      token
+    )}#Intent;scheme=${APP_REDIRECT_SCHEME};package=com.example.komek_app;end;`;
+    console.log(
+      '[Auth] /auth/app-redirect → intent for Yandex | token prefix:',
+      token.slice(0, 8),
+      '... | intentUrl=',
+      intentUrl
+    );
+    return res.redirect(intentUrl);
+  }
+
   const webUrl = process.env.APP_REDIRECT_WEB_URL || '';
   if (webUrl) {
     const base = webUrl.replace(/\/$/, '');
