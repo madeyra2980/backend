@@ -1,11 +1,12 @@
 import { Router } from 'express';
 import passport from 'passport';
 import crypto from 'crypto';
+import bcrypt from 'bcryptjs';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { OAuth2Client } from 'google-auth-library';
-import { findById, findOrCreateFromGoogle } from '../store/users.js';
+import { findById, findOrCreateFromGoogle, findByEmail, createUserByEmail, setVerifiedByToken } from '../store/users.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
@@ -61,6 +62,130 @@ export async function loadAppTokens() {
     }
   }
 }
+
+const BACKEND_URL = (process.env.BACKEND_URL || 'https://backend-2-jbcd.onrender.com').replace(/\/$/, '');
+
+/** Отправить письмо с ссылкой верификации или вывести ссылку в консоль */
+async function sendVerificationEmail(email, verifyUrl) {
+  try {
+    const nodemailer = (await import('nodemailer')).default;
+    const transport = nodemailer.createTransport({
+      host: process.env.SMTP_HOST || 'smtp.gmail.com',
+      port: parseInt(process.env.SMTP_PORT || '587', 10),
+      secure: process.env.SMTP_SECURE === '1',
+      auth: process.env.SMTP_USER ? {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS,
+      } : undefined,
+    });
+    await transport.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@komek.kz',
+      to: email,
+      subject: 'Подтверждение почты — Kömek',
+      text: `Перейдите по ссылке для подтверждения: ${verifyUrl}`,
+      html: `<p>Перейдите по ссылке для подтверждения:</p><p><a href="${verifyUrl}">${verifyUrl}</a></p><p>Ссылка действительна 24 часа.</p>`,
+    });
+    console.log('[Auth] Verification email sent to', email);
+  } catch (err) {
+    console.log('[Auth] SMTP not configured or failed, verification link (copy to browser):', verifyUrl);
+  }
+}
+
+// ————— Регистрация по email —————
+router.post('/register', async (req, res) => {
+  try {
+    const { email, password, firstName, lastName } = req.body || {};
+    const em = (email && String(email).trim()) || '';
+    const pw = password != null ? String(password) : '';
+
+    if (!em) return res.status(400).json({ error: 'Укажите email' });
+    if (pw.length < 6) return res.status(400).json({ error: 'Пароль не менее 6 символов' });
+
+    const existing = await findByEmail(em);
+    if (existing) return res.status(400).json({ error: 'Такой email уже зарегистрирован' });
+
+    const verificationToken = crypto.randomBytes(32).toString('hex');
+    const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const passwordHash = await bcrypt.hash(pw, 10);
+
+    const user = await createUserByEmail({
+      email: em,
+      passwordHash,
+      firstName: firstName != null ? String(firstName).trim() : '',
+      lastName: lastName != null ? String(lastName).trim() : '',
+      verificationToken,
+      verificationTokenExpires,
+    });
+
+    const verifyUrl = `${BACKEND_URL}/auth/verify?token=${encodeURIComponent(verificationToken)}`;
+    await sendVerificationEmail(em, verifyUrl);
+
+    return res.status(201).json({
+      message: 'Зарегистрированы. Проверьте почту и перейдите по ссылке для подтверждения.',
+      email: em,
+    });
+  } catch (err) {
+    console.error('[Auth] Register error:', err);
+    res.status(500).json({ error: 'Ошибка регистрации' });
+  }
+});
+
+// ————— Подтверждение почты по ссылке —————
+router.get('/verify', async (req, res) => {
+  const token = (req.query.token && String(req.query.token).trim()) || '';
+  if (!token) {
+    return res.status(400).send('<html><body><p>Неверная ссылка. Укажите токен: ?token=...</p></body></html>');
+  }
+  const user = await setVerifiedByToken(token);
+  if (!user) {
+    return res.status(400).send('<html><body><p>Ссылка недействительна или истекла. Запросите новое письмо.</p></body></html>');
+  }
+  // Редирект: в приложение (komek://login?verified=1) или на веб (?verified=1)
+  const appUrl = process.env.APP_VERIFIED_REDIRECT || `${FRONTEND_URL}${FRONTEND_URL.includes('?') ? '&' : '?'}verified=1`;
+  return res.redirect(302, appUrl);
+});
+
+// ————— Вход по email и паролю —————
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    const em = (email && String(email).trim()) || '';
+    const pw = password != null ? String(password) : '';
+
+    if (!em || !pw) return res.status(400).json({ error: 'Укажите email и пароль' });
+
+    const user = await findByEmail(em);
+    if (!user) return res.status(401).json({ error: 'Неверный email или пароль' });
+
+    const hash = user.password_hash || user.passwordHash;
+    if (!hash) return res.status(401).json({ error: 'Вход по паролю для этого аккаунта недоступен. Используйте Google или зарегистрируйтесь.' });
+
+    const match = await bcrypt.compare(pw, hash);
+    if (!match) return res.status(401).json({ error: 'Неверный email или пароль' });
+
+    const verified = user.email_verified === true || user.email_verified === 't';
+    if (!verified) return res.status(403).json({ error: 'Подтвердите почту по ссылке из письма, затем войдите снова.' });
+
+    const token = generateAppToken();
+    appTokenStore.set(token, { userId: user.id, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
+    await persistAppTokens();
+
+    const name = user.name || user.full_name || user.firstName || user.first_name || [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email?.split('@')[0] || 'User';
+
+    return res.json({
+      token,
+      user: {
+        id: String(user.id),
+        email: user.email || '',
+        name,
+        picture: user.google_avatar || user.avatar || null,
+      },
+    });
+  } catch (err) {
+    console.error('[Auth] Login error:', err);
+    res.status(500).json({ error: 'Ошибка входа' });
+  }
+});
 
 // Запуск входа через Google
 // ?app=1 — используется отдельный callback /auth/google/callback/app → редирект в приложение (komek://)
@@ -225,7 +350,7 @@ router.get('/app-redirect', (req, res) => {
   if (isYandex) {
     const intentUrl = `intent://login?token=${encodeURIComponent(
       token
-    )}#Intent;scheme=${APP_REDIRECT_SCHEME};package=kz.komek.app;end;`;
+    )}#Intent;scheme=${APP_REDIRECT_SCHEME};package=com.komek.app;end;`;
     console.log(
       '[Auth] /auth/app-redirect → intent for Yandex | token prefix:',
       token.slice(0, 8),

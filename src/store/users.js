@@ -251,3 +251,84 @@ export async function findById(id) {
   const result = await query('SELECT * FROM users WHERE id = $1', [id]);
   return result.rows.length > 0 ? result.rows[0] : null;
 }
+
+/**
+ * Найти пользователя по email
+ */
+export async function findByEmail(email) {
+  if (!email || !String(email).trim()) return null;
+  const result = await query('SELECT * FROM users WHERE email = $1', [String(email).trim().toLowerCase()]);
+  return result.rows.length > 0 ? result.rows[0] : null;
+}
+
+/**
+ * Создать пользователя по email и паролю (для регистрации). email_verified = false, выдаётся verification_token.
+ */
+export async function createUserByEmail({ email, passwordHash, firstName, lastName, verificationToken, verificationTokenExpires }) {
+  const id = crypto.randomUUID();
+  const accountId = `ACC-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+  const em = String(email).trim().toLowerCase();
+  const fn = String(firstName || '').trim() || em.split('@')[0] || 'User';
+  const ln = String(lastName || '').trim();
+
+  try {
+    const result = await query(
+      `INSERT INTO users (id, email, "firstName", "lastName", account_id, password_hash, email_verified, verification_token, verification_token_expires, "createdAt", "updatedAt")
+       VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, NOW(), NOW())
+       RETURNING *`,
+      [id, em, fn, ln, accountId, passwordHash, verificationToken, verificationTokenExpires]
+    );
+    return result.rows[0];
+  } catch (err) {
+    if (err.message.includes('column') && err.message.includes('does not exist')) {
+      const result = await query(
+        `INSERT INTO users (id, email, first_name, last_name, account_id, password_hash, email_verified, verification_token, verification_token_expires, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, false, $7, $8, NOW(), NOW())
+         RETURNING *`,
+        [id, em, fn, ln, accountId, passwordHash, verificationToken, verificationTokenExpires]
+      );
+      return result.rows[0];
+    }
+    throw err;
+  }
+}
+
+/**
+ * Подтвердить почту по токену верификации. Возвращает пользователя или null.
+ */
+export async function setVerifiedByToken(token) {
+  if (!token || !String(token).trim()) return null;
+  const t = String(token).trim();
+  try {
+    const result = await query(
+      `UPDATE users SET email_verified = true, verification_token = NULL, verification_token_expires = NULL, "updatedAt" = NOW()
+       WHERE verification_token = $1 AND verification_token_expires > NOW()
+       RETURNING *`,
+      [t]
+    );
+    if (result.rows.length > 0) return result.rows[0];
+  } catch (_) {}
+  try {
+    const r2 = await query(
+      `UPDATE users SET email_verified = true, verification_token = NULL, verification_token_expires = NULL, updated_at = NOW()
+       WHERE verification_token = $1 AND verification_token_expires > NOW()
+       RETURNING *`,
+      [t]
+    );
+    return r2.rows[0] || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * Найти пользователя по токену верификации (без обновления)
+ */
+export async function findByVerificationToken(token) {
+  if (!token || !String(token).trim()) return null;
+  const result = await query(
+    'SELECT * FROM users WHERE verification_token = $1 AND verification_token_expires > NOW()',
+    [String(token).trim()]
+  );
+  return result.rows.length > 0 ? result.rows[0] : null;
+}
