@@ -17,9 +17,10 @@ export function requireAdmin(req, res, next) {
     try {
       const decoded = Buffer.from(base64, 'base64').toString('utf8');
       const [login, password] = decoded.split(':', 2);
+      // Те же дефолты, что и в POST /admin/login — иначе с другого origin Basic не пройдёт
       const ADMIN_LOGIN = (process.env.ADMIN_LOGIN || 'komek-2026').trim();
-      const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || '').trim();
-      if (ADMIN_PASSWORD && login === ADMIN_LOGIN && password === ADMIN_PASSWORD) {
+      const ADMIN_PASSWORD = (process.env.ADMIN_PASSWORD || 'Saken-Madik2002').trim();
+      if (login === ADMIN_LOGIN && password === ADMIN_PASSWORD) {
         return next();
       }
     } catch (e) {

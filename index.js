@@ -133,11 +133,6 @@ async function startNgrok(port) {
 // Запуск сервера (сначала загружаем токены приложения из файла)
 loadAppTokens().then(() => {
   app.listen(PORT, () => {
-    console.log('DB_HOST:', process.env.DB_HOST);
-    console.log('DB_PORT:', process.env.DB_PORT);
-    console.log('DB_NAME:', process.env.DB_NAME);
-    console.log('DB_USER:', process.env.DB_USER);
-    console.log('DB_PASSWORD:', process.env.DB_PASSWORD);
     const serverUrl = IS_PRODUCTION ? BACKEND_URL : `http://localhost:${PORT}`;
     console.log(`🚀 Server running on ${serverUrl}`);
     console.log(`📱 Frontend URL: ${FRONTEND_URL}`);

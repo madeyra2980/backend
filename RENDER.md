@@ -73,6 +73,44 @@
 
 Сохрани и при необходимости обнови переменные `GOOGLE_CLIENT_ID` и `GOOGLE_CLIENT_SECRET` на Render.
 
+---
+
+## Настройка redirect и URL (пример: backend на Render)
+
+Если бэкенд уже задеплоен, например на **https://backend-2-jbcd.onrender.com**, сделай следующее.
+
+### 1. Переменные окружения на Render (backend)
+
+В **Dashboard** → твой Web Service → **Environment** задай (подставь свои URL фронтов):
+
+| Переменная | Значение |
+|------------|----------|
+| `BACKEND_URL` | `https://backend-2-jbcd.onrender.com` |
+| `FRONTEND_URL` | URL основного фронта (куда редирект после входа с веба), напр. `https://твой-фронт.vercel.app` или `http://localhost:3001` для теста |
+| `ADMIN_FRONTEND_URL` | URL админ-панели, напр. `https://твой-админ.onrender.com` или `http://localhost:4000` |
+| `SPECIALIST_FRONTEND_URL` | URL фронта специалистов, если есть |
+
+Без слэша в конце. После изменений — **Save Changes**, при необходимости **Manual Deploy**.
+
+### 2. Google Cloud Console — Authorized redirect URIs
+
+[Google Cloud Console](https://console.cloud.google.com/apis/credentials) → твой OAuth 2.0 Client ID → **Authorized redirect URIs** — добавь **ровно**:
+
+- `https://backend-2-jbcd.onrender.com/auth/google/callback`
+- `https://backend-2-jbcd.onrender.com/auth/google/callback/app`
+
+Сохрани. Тогда после «Войти через Google» браузер будет редиректить на твой backend, а backend — на `FRONTEND_URL` или в приложение (`komek://login?token=...`).
+
+### 3. Фронтенды — откуда ходят на API
+
+Чтобы все запросы шли на твой backend на Render:
+
+- **frontend (клиентский):** при сборке/запуске задай `VITE_API_URL=https://backend-2-jbcd.onrender.com`. В Vercel/Netlify — переменная окружения `VITE_API_URL`. Локально — в `frontend/.env`: `VITE_API_URL=https://backend-2-jbcd.onrender.com`.
+- **admin-frontend:** то же: `VITE_API_URL=https://backend-2-jbcd.onrender.com` (в `.env` или в настройках деплоя).
+- **specialist-frontend:** `VITE_API_URL=https://backend-2-jbcd.onrender.com`.
+
+Итого: на Render задаёшь `BACKEND_URL` и URL всех фронтов; в Google — два redirect URI на `backend-2-jbcd.onrender.com`; во всех фронтах — `VITE_API_URL` на этот же URL.
+
 ## Заметки
 
 - На бесплатном плане сервис «засыпает» после неактивности; первый запрос может быть медленным.
