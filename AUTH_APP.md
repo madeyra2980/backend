@@ -6,7 +6,7 @@
 
 | | React (Next.js) | Flutter app |
 |---|---|---|
-| **Запросы** | Браузер ходит на `localhost:3001/api` → Next.js проксирует на backend (та же «страница», CORS не нужен) | Приложение ходит **напрямую** на `https://backend-2-jbcd.onrender.com` |
+| **Запросы** | Браузер ходит на `localhost:3001/api` → Next.js проксирует на backend (та же «страница», CORS не нужен) | Приложение ходит **напрямую** на `http://localhost:3000` |
 | **Авторизация** | **Сессия (cookie)** — после входа через Google backend ставит cookie, браузер отправляет её с каждым запросом | **Bearer-токен** — после входа backend отдаёт токен в ссылке `komek://login?token=...`, приложение сохраняет и шлёт заголовок `Authorization: Bearer <token>` |
 | **Где хранится пользователь** | `req.user` из **passport.session()** (cookie) | `req.user` из **setUserFromToken** (токен в памяти + файл `data/app-tokens.json`) |
 
@@ -38,7 +38,7 @@
 Backend при старте считает URL так (в `passport.js`):
 
 - **Для приложения (Flutter):**  
-  `APP_CALLBACK_BASE_URL` → если нет, то `BACKEND_URL` → если нет, то `https://backend-2-jbcd.onrender.com`  
+  `APP_CALLBACK_BASE_URL` → если нет, то `BACKEND_URL` → если нет, то `http://localhost:3000`  
   К нему дописывается путь: `.../auth/google/callback/app`.
 
 | Окружение | Что задать | Результат (редирект после Google) |

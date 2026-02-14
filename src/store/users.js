@@ -262,6 +262,20 @@ export async function findByEmail(email) {
 }
 
 /**
+ * Найти пользователя по номеру телефона (для входа специалистов).
+ * Сравниваем с нормализацией пробелов: +7 700 123 45 67 и 87001234567 находят одну запись.
+ */
+export async function findByPhone(phone) {
+  if (!phone || !String(phone).trim()) return null;
+  const normalized = String(phone).trim().replace(/\s+/g, '');
+  const result = await query(
+    `SELECT * FROM users WHERE phone = $1 OR REPLACE(COALESCE(phone, ''), ' ', '') = $2 LIMIT 1`,
+    [String(phone).trim(), normalized]
+  );
+  return result.rows.length > 0 ? result.rows[0] : null;
+}
+
+/**
  * Создать пользователя по email и паролю (для регистрации). email_verified = false, выдаётся verification_token.
  */
 export async function createUserByEmail({ email, passwordHash, firstName, lastName, verificationToken, verificationTokenExpires }) {

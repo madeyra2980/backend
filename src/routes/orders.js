@@ -39,6 +39,17 @@ router.post('/', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'Укажите корректную специальность (услугу)' });
     }
 
+    // Пока есть заявка в статусе "в поиске специалиста" — новую создавать нельзя
+    const existingOpen = await query(
+      'SELECT id FROM orders WHERE customer_id = $1 AND status = $2 LIMIT 1',
+      [userId, 'open']
+    );
+    if (existingOpen.rows.length > 0) {
+      return res.status(400).json({
+        error: 'У вас уже есть заявка в поиске специалиста. Дождитесь отклика или завершите текущую заявку.',
+      });
+    }
+
     const price = proposedPrice != null ? parseFloat(proposedPrice) : null;
     const lat = latitude != null ? parseFloat(latitude) : null;
     const lng = longitude != null ? parseFloat(longitude) : null;
@@ -66,11 +77,29 @@ router.post('/', requireAuth, async (req, res) => {
   }
 });
 
-// Список заявок: ?my=1 — мои как заказчик; иначе — доступные специалисту (open + по его специальностям)
+// Список заявок: ?my=1 — мои как заказчик; ?asSpecialist=1 — мои как специалист (принятые); иначе — доступные (open)
 router.get('/', requireAuth, async (req, res) => {
   try {
     const userId = req.user.id;
     const my = req.query.my === '1' || req.query.my === 'true';
+    const asSpecialist = req.query.asSpecialist === '1' || req.query.asSpecialist === 'true';
+
+    if (asSpecialist) {
+      const result = await query(
+        `SELECT o.id, o.customer_id, o.specialty_id, o.description, o.proposed_price, o.preferred_at,
+                o.latitude, o.longitude, o.address_text, o.status, o.specialist_id, o.created_at, o.updated_at,
+                (SELECT (u."firstName" || ' ' || COALESCE(u."lastName", '')) FROM users u WHERE u.id = o.customer_id) as customer_name,
+                spec."firstName" as specialist_first_name, spec."lastName" as specialist_last_name, spec.phone as specialist_phone
+         FROM orders o
+         LEFT JOIN users spec ON spec.id = o.specialist_id
+         WHERE o.specialist_id = $1
+         ORDER BY o.created_at DESC`,
+        [userId]
+      );
+      return res.json({
+        orders: result.rows.map((r) => mapOrderRow({ ...r, customer_name: (r.customer_name || '').trim() || 'Заказчик' })),
+      });
+    }
 
     if (my) {
       const result = await query(
@@ -203,6 +232,60 @@ router.patch('/:id/accept', requireAuth, async (req, res) => {
     }
     console.error('Accept order error:', err);
     res.status(500).json({ error: 'Ошибка при принятии заявки' });
+  }
+});
+
+// Специалист меняет статус заявки на "Еду" (in_progress) или "Выполнена" (completed)
+router.patch('/:id/status', requireAuth, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { id } = req.params;
+    const { status } = req.body || {};
+    const allowed = ['in_progress', 'completed'];
+    if (!status || !allowed.includes(status)) {
+      return res.status(400).json({ error: 'Укажите status: in_progress (еду) или completed (выполнена)' });
+    }
+
+    const orderResult = await query(
+      'SELECT id, specialist_id, status FROM orders WHERE id = $1',
+      [id]
+    );
+    if (orderResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Заявка не найдена' });
+    }
+    const order = orderResult.rows[0];
+    if (order.specialist_id !== userId) {
+      return res.status(403).json({ error: 'Вы не являетесь исполнителем этой заявки' });
+    }
+    if (order.status === 'open') {
+      return res.status(400).json({ error: 'Сначала примите заявку' });
+    }
+
+    await query(
+      'UPDATE orders SET status = $1, updated_at = NOW() WHERE id = $2',
+      [status, id]
+    );
+
+    const updated = await query(
+      `SELECT o.*, (u."firstName" || ' ' || COALESCE(u."lastName", '')) as customer_name,
+              spec."firstName" as specialist_first_name, spec."lastName" as specialist_last_name, spec.phone as specialist_phone
+       FROM orders o
+       JOIN users u ON u.id = o.customer_id
+       LEFT JOIN users spec ON spec.id = o.specialist_id
+       WHERE o.id = $1`,
+      [id]
+    );
+    const r = updated.rows[0];
+    res.json({
+      order: mapOrderRow({ ...r, customer_name: (r.customer_name || '').trim() || 'Заказчик' }),
+      message: status === 'in_progress' ? 'Статус: Еду' : 'Заявка выполнена',
+    });
+  } catch (err) {
+    if (err.code === '42P01') {
+      return res.status(503).json({ error: 'Таблица заявок ещё не создана' });
+    }
+    console.error('Update order status error:', err);
+    res.status(500).json({ error: 'Ошибка при обновлении статуса' });
   }
 });
 

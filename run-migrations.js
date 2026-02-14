@@ -8,12 +8,18 @@ import { fileURLToPath } from 'url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { Pool } = pg;
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
-});
+const connectionString = process.env.DATABASE_URL;
+const config = connectionString
+  ? { connectionString, ssl: { rejectUnauthorized: false } }
+  : {
+      host: process.env.DB_HOST || 'localhost',
+      port: parseInt(process.env.DB_PORT || '5432', 10),
+      database: process.env.DB_NAME || 'komek_db',
+      user: process.env.DB_USER || 'komek_user',
+      password: process.env.DB_PASSWORD || '',
+      ssl: false,
+    };
+const pool = new Pool(config);
 
 const migrationsDir = path.join(__dirname, 'migrations');
 

@@ -2,14 +2,24 @@ import pg from 'pg';
 
 const { Pool } = pg;
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: {
-    rejectUnauthorized: false
-  }
-});
-//
-console.log('DATABASE_URL', process.env.DATABASE_URL);
+// Локально: DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD. На Render: DATABASE_URL
+const connectionString = process.env.DATABASE_URL;
+const config = connectionString
+  ? {
+      connectionString,
+      ssl: { rejectUnauthorized: false },
+    }
+  : {
+      host: process.env.DB_HOST || 'localhost',
+      port: parseInt(process.env.DB_PORT || '5432', 10),
+      database: process.env.DB_NAME || 'komek_db',
+      user: process.env.DB_USER || 'komek_user',
+      password: String(process.env.DB_PASSWORD ?? ''),
+      ssl: false, // локально SSL не нужен
+    };
+
+const pool = new Pool(config);
+console.log('DB:', connectionString ? 'DATABASE_URL' : `${config.host}:${config.port}/${config.database}`);
 export { pool };
 
 export async function query(text, params) {

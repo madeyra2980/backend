@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import session from 'express-session';
 import cors from 'cors';
@@ -15,8 +16,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-// Загружаем переменные: сначала .env, затем .env.example (если .env нет или в нём нет нужных ключей)
-dotenv.config();
+// .env.example как fallback если нет GOOGLE_CLIENT_ID
 if (!process.env.GOOGLE_CLIENT_ID) {
   dotenv.config({ path: path.join(__dirname, '.env.example') });
 }
@@ -25,16 +25,19 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3001';
 const ADMIN_FRONTEND_URL = process.env.ADMIN_FRONTEND_URL || 'http://localhost:4000';
+const SPECIALIST_FRONTEND_URL = process.env.SPECIALIST_FRONTEND_URL || 'http://localhost:3002';
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
 
 // Настройка CORS: React (3001) + backend на Render + любой localhost в dev (Flutter Web и др.)
 // Для нативного Flutter (macOS/Android/iOS) CORS не применяется — запросы идут не из браузера
-const BACKEND_URL = 'https://backend-2-jbcd.onrender.com';
+// На Render задайте BACKEND_URL = https://your-service.onrender.com
+const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:3000';
 const corsOrigin = (origin, cb) => {
   if (!origin) return cb(null, true); // запросы без Origin (нативное приложение, Postman)
   if (origin === FRONTEND_URL) return cb(null, origin);
   if (origin === BACKEND_URL) return cb(null, origin);
   if (origin === ADMIN_FRONTEND_URL) return cb(null, origin);
+  if (origin === SPECIALIST_FRONTEND_URL) return cb(null, origin);
   if (process.env.NODE_ENV !== 'production' && /^https?:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, origin);
   cb(null, false);
 };
@@ -62,7 +65,7 @@ app.use(
     saveUninitialized: false,
     cookie: {
       // В проде обязательны secure + sameSite=None, чтобы куки ходили
-      // с отдельного домена админ-панели (https://backend-2-jbcd.onrender.com <-> http(s)://localhost:4000)
+      // с отдельного домена админ-панели (http://localhost:3000 <-> http(s)://localhost:4000)
       secure: IS_PRODUCTION, // HTTPS в production
       httpOnly: true,
       maxAge: 24 * 60 * 60 * 1000, // 24 часа

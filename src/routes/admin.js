@@ -2,24 +2,62 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import crypto from 'crypto';
 import { query } from '../db.js';
+import { findByEmail } from '../store/users.js';
 import { requireAdmin } from '../middleware/auth.js';
 import { CITIES } from '../constants/cities.js';
 import { filterAllowedSpecialtyIds, SPECIALTIES } from '../constants/specialties.js';
 
 const router = Router();
 
-// Доступы администратора только из env (ADMIN_PASSWORD не должен быть по умолчанию в коде)
-const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'komek-2026';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+// Статичные учётные данные для входа в админ-панель (не из .env и не из БД)
+const STATIC_ADMIN_LOGIN = 'komek-2026';
+const STATIC_ADMIN_PASSWORD = 'Saken-Madik2002';
 
-// Вход в админ-панель: создаём сессию администратора
-router.post('/login', (req, res) => {
+const ADMIN_LOGIN = process.env.ADMIN_LOGIN || STATIC_ADMIN_LOGIN;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || STATIC_ADMIN_PASSWORD;
+
+// Вход: 1) статичные логин/пароль, 2) env (если заданы), 3) БД (is_admin + password)
+router.post('/login', async (req, res) => {
   const { login, password } = req.body || {};
 
+  if (!login || !password) {
+    req.session.isAdmin = false;
+    return res.status(400).json({ error: 'Укажите логин и пароль' });
+  }
+
+  // 1) Статичные учётные данные
+  if (login === STATIC_ADMIN_LOGIN && password === STATIC_ADMIN_PASSWORD) {
+    req.session.isAdmin = true;
+    req.session.adminLoggedInAt = new Date().toISOString();
+    return res.json({ ok: true });
+  }
+
+  // 2) Переменные окружения (если заданы и отличаются от статичных)
   if (ADMIN_PASSWORD && login === ADMIN_LOGIN && password === ADMIN_PASSWORD) {
     req.session.isAdmin = true;
     req.session.adminLoggedInAt = new Date().toISOString();
     return res.json({ ok: true });
+  }
+
+  // 3) БД: пользователь с is_admin = true
+  try {
+    const user = await findByEmail(String(login).trim());
+    const isAdmin = user && (user.is_admin === true || user.isAdmin === true);
+    if (isAdmin) {
+      const hash = user.password_hash || user.passwordHash;
+      const plain = user.password_plain || user.passwordPlain;
+      const pwd = String(password);
+      let match = false;
+      if (hash) match = await bcrypt.compare(pwd, hash);
+      if (!match && plain && plain === pwd) match = true;
+      if (match) {
+        req.session.isAdmin = true;
+        req.session.adminLoggedInAt = new Date().toISOString();
+        return res.json({ ok: true });
+      }
+    }
+  } catch (err) {
+    console.error('[Admin] login DB check error:', err.message);
   }
 
   req.session.isAdmin = false;

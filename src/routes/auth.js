@@ -6,7 +6,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { OAuth2Client } from 'google-auth-library';
-import { findById, findOrCreateFromGoogle, findByEmail, createUserByEmail, setVerifiedByToken } from '../store/users.js';
+import { findById, findByEmail, findByPhone, findOrCreateFromGoogle } from '../store/users.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const router = Router();
@@ -20,9 +20,7 @@ function isGoogleOAuthConfigured() {
 }
 
 const APP_TOKENS_FILE = path.join(__dirname, '../../data/app-tokens.json');
-
-// Токены для мобильного/десктоп приложения (срок 24 часа), загружаются из файла при старте
-const appTokenStore = new Map(); // token -> { userId, expiresAt }
+const appTokenStore = new Map();
 
 const googleClient = new OAuth2Client((process.env.GOOGLE_CLIENT_ID || '').trim());
 
@@ -63,131 +61,7 @@ export async function loadAppTokens() {
   }
 }
 
-const BACKEND_URL = (process.env.BACKEND_URL || 'https://backend-2-jbcd.onrender.com').replace(/\/$/, '');
-
-/** Отправить письмо с ссылкой верификации (Gmail и др.) или вывести ссылку в консоль */
-async function sendVerificationEmail(email, verifyUrl) {
-  try {
-    const nodemailer = (await import('nodemailer')).default;
-    const port = parseInt(process.env.SMTP_PORT || '587', 10);
-    const transport = nodemailer.createTransport({
-      host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port,
-      secure: process.env.SMTP_SECURE === '1',
-      auth: process.env.SMTP_USER ? {
-        user: process.env.SMTP_USER,
-        pass: process.env.SMTP_PASS,
-      } : undefined,
-    });
-    await transport.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@komek.kz',
-      to: email,
-      subject: 'Подтверждение почты — Kömek',
-      text: `Перейдите по ссылке для подтверждения: ${verifyUrl}`,
-      html: `<p>Перейдите по ссылке для подтверждения:</p><p><a href="${verifyUrl}">${verifyUrl}</a></p><p>Ссылка действительна 24 часа.</p>`,
-    });
-    console.log('[Auth] Verification email sent to', email);
-  } catch (err) {
-    console.error('[Auth] SMTP error:', err.message);
-    console.log('[Auth] Verification link (copy to browser):', verifyUrl);
-  }
-}
-
-// ————— Регистрация по email —————
-router.post('/register', async (req, res) => {
-  try {
-    const { email, password, firstName, lastName } = req.body || {};
-    const em = (email && String(email).trim()) || '';
-    const pw = password != null ? String(password) : '';
-
-    if (!em) return res.status(400).json({ error: 'Укажите email' });
-    if (pw.length < 6) return res.status(400).json({ error: 'Пароль не менее 6 символов' });
-
-    const existing = await findByEmail(em);
-    if (existing) return res.status(400).json({ error: 'Такой email уже зарегистрирован' });
-
-    const verificationToken = crypto.randomBytes(32).toString('hex');
-    const verificationTokenExpires = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    const passwordHash = await bcrypt.hash(pw, 10);
-
-    const user = await createUserByEmail({
-      email: em,
-      passwordHash,
-      firstName: firstName != null ? String(firstName).trim() : '',
-      lastName: lastName != null ? String(lastName).trim() : '',
-      verificationToken,
-      verificationTokenExpires,
-    });
-
-    const verifyUrl = `${BACKEND_URL}/auth/verify?token=${encodeURIComponent(verificationToken)}`;
-    await sendVerificationEmail(em, verifyUrl);
-
-    return res.status(201).json({
-      message: 'Зарегистрированы. Проверьте почту и перейдите по ссылке для подтверждения.',
-      email: em,
-    });
-  } catch (err) {
-    console.error('[Auth] Register error:', err);
-    res.status(500).json({ error: 'Ошибка регистрации' });
-  }
-});
-
-// ————— Подтверждение почты по ссылке —————
-router.get('/verify', async (req, res) => {
-  const token = (req.query.token && String(req.query.token).trim()) || '';
-  if (!token) {
-    return res.status(400).send('<html><body><p>Неверная ссылка. Укажите токен: ?token=...</p></body></html>');
-  }
-  const user = await setVerifiedByToken(token);
-  if (!user) {
-    return res.status(400).send('<html><body><p>Ссылка недействительна или истекла. Запросите новое письмо.</p></body></html>');
-  }
-  // Редирект: в приложение (komek://login?verified=1) или на веб (?verified=1)
-  const appUrl = process.env.APP_VERIFIED_REDIRECT || `${FRONTEND_URL}${FRONTEND_URL.includes('?') ? '&' : '?'}verified=1`;
-  return res.redirect(302, appUrl);
-});
-
-// ————— Вход по email и паролю —————
-router.post('/login', async (req, res) => {
-  try {
-    const { email, password } = req.body || {};
-    const em = (email && String(email).trim()) || '';
-    const pw = password != null ? String(password) : '';
-
-    if (!em || !pw) return res.status(400).json({ error: 'Укажите email и пароль' });
-
-    const user = await findByEmail(em);
-    if (!user) return res.status(401).json({ error: 'Неверный email или пароль' });
-
-    const hash = user.password_hash || user.passwordHash;
-    if (!hash) return res.status(401).json({ error: 'Вход по паролю для этого аккаунта недоступен. Используйте Google или зарегистрируйтесь.' });
-
-    const match = await bcrypt.compare(pw, hash);
-    if (!match) return res.status(401).json({ error: 'Неверный email или пароль' });
-
-    const verified = user.email_verified === true || user.email_verified === 't';
-    if (!verified) return res.status(403).json({ error: 'Подтвердите почту по ссылке из письма, затем войдите снова.' });
-
-    const token = generateAppToken();
-    appTokenStore.set(token, { userId: user.id, expiresAt: Date.now() + 24 * 60 * 60 * 1000 });
-    await persistAppTokens();
-
-    const name = user.name || user.full_name || user.firstName || user.first_name || [user.firstName, user.lastName].filter(Boolean).join(' ') || user.email?.split('@')[0] || 'User';
-
-    return res.json({
-      token,
-      user: {
-        id: String(user.id),
-        email: user.email || '',
-        name,
-        picture: user.google_avatar || user.avatar || null,
-      },
-    });
-  } catch (err) {
-    console.error('[Auth] Login error:', err);
-    res.status(500).json({ error: 'Ошибка входа' });
-  }
-});
+// ————— OAuth Google —————
 
 // Запуск входа через Google
 // ?app=1 — используется отдельный callback /auth/google/callback/app → редирект в приложение (komek://)
@@ -198,41 +72,47 @@ router.get('/google', (req, res, next) => {
     return res.redirect(`${FRONTEND_URL}/?error=oauth_not_configured`);
   }
   if (req.query.app === '1') {
-    const appBase = (process.env.APP_CALLBACK_BASE_URL || process.env.BACKEND_URL || 'https://backend-2-jbcd.onrender.com').replace(/\/$/, '');
+    const appBase = (process.env.APP_CALLBACK_BASE_URL || process.env.BACKEND_URL || 'http://localhost:3000').replace(/\/$/, '');
     console.log('[Auth] App login: redirect_uri sent to Google =', appBase + '/auth/google/callback/app');
     passport.authenticate('google-app', { scope: ['profile', 'email'] })(req, res, next);
   } else {
-    console.log('[Auth] Web login: redirect_uri will be', process.env.GOOGLE_CALLBACK_URL || 'https://backend-2-jbcd.onrender.com/auth/google/callback');
+    console.log('[Auth] Web login: redirect_uri will be', process.env.GOOGLE_CALLBACK_URL || 'http://localhost:3000/auth/google/callback');
     passport.authenticate('google', { scope: ['profile', 'email'] })(req, res, next);
   }
 });
 
-// Callback для веба (редирект на FRONTEND_URL)
+// Callback для веба: выдаём токен и редирект на frontend (как для app)
 router.get('/google/callback', (req, res, next) => {
   console.log('[Auth] /auth/google/callback hit | ua=', req.headers['user-agent']);
   if (!isGoogleOAuthConfigured()) {
     console.warn('[Auth] /auth/google/callback blocked: Google OAuth is not configured');
-    return res.redirect(`${FRONTEND_URL}/?error=oauth_not_configured`);
+    return res.redirect(`${FRONTEND_URL}/login?error=oauth_not_configured`);
   }
   passport.authenticate('google', {
-    session: true,
-    failureRedirect: `${FRONTEND_URL}/?error=auth_failed`,
-  })(req, res, (err) => {
+    session: false,
+    failureRedirect: `${FRONTEND_URL}/login?error=auth_failed`,
+  })(req, res, async (err) => {
     if (err) {
       console.error('[Auth] /auth/google/callback error:', err.message);
       return next(err);
     }
     if (!req.user) {
       console.warn('[Auth] /auth/google/callback: req.user is empty, redirecting with error');
-    } else {
-      console.log('[Auth] /auth/google/callback success for user', req.user.id);
+      return res.redirect(`${FRONTEND_URL}/login?error=auth_failed`);
     }
-    res.redirect(`${FRONTEND_URL}/?logged=1`);
+    const token = generateAppToken();
+    appTokenStore.set(token, {
+      userId: req.user.id,
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
+    });
+    await persistAppTokens();
+    console.log('[Auth] Web OAuth success for user', req.user.id, '| token prefix:', token.slice(0, 8), '...');
+    res.redirect(`${FRONTEND_URL}/login/oauth-callback?token=${encodeURIComponent(token)}`);
   });
 });
 
 // Callback для приложения → редирект на страницу app-redirect (оттуда открывается приложение)
-// В Google Cloud Console добавьте: https://backend-2-jbcd.onrender.com/auth/google/callback/app
+// В Google Cloud Console добавьте: http://localhost:3000/auth/google/callback/app
 router.get('/google/callback/app', (req, res, next) => {
   console.log('[Auth] /auth/google/callback/app hit | ua=', req.headers['user-agent']);
   if (!isGoogleOAuthConfigured()) {
@@ -240,7 +120,7 @@ router.get('/google/callback/app', (req, res, next) => {
     return res.redirect(`${FRONTEND_URL}/?error=oauth_not_configured`);
   }
   passport.authenticate('google-app', {
-    session: true,
+    session: false,
     failureRedirect: `${FRONTEND_URL}/?error=auth_failed`,
   })(req, res, async (err) => {
     if (err) {
@@ -373,23 +253,63 @@ router.get('/app-redirect', (req, res) => {
   res.redirect(appUrl);
 });
 
-// Выход
-router.post('/logout', (req, res, next) => {
-  console.log('[Auth] /auth/logout called | ua=', req.headers['user-agent']);
-  req.logout((err) => {
-    if (err) {
-      console.error('[Auth] /auth/logout error during logout:', err.message);
-      return next(err);
+// Вход по телефону или email и паролю (специалисты создаются в админке по номеру телефона)
+router.post('/login', async (req, res) => {
+  try {
+    const { email, phone, password } = req.body || {};
+    if (!password) {
+      return res.status(400).json({ error: 'Укажите пароль' });
     }
-    req.session.destroy((err2) => {
-      if (err2) {
-        console.error('[Auth] /auth/logout error destroying session:', err2.message);
-        return next(err2);
-      }
-      console.log('[Auth] /auth/logout success');
-      res.json({ ok: true });
+    const byPhone = phone != null && String(phone).trim() !== '';
+    const byEmail = email != null && String(email).trim() !== '';
+    if (!byPhone && !byEmail) {
+      return res.status(400).json({ error: 'Укажите номер телефона или email' });
+    }
+    const user = byPhone
+      ? await findByPhone(String(phone).trim())
+      : await findByEmail(String(email).trim());
+    if (!user) {
+      return res.status(401).json({ error: 'Неверный номер телефона (или email) или пароль' });
+    }
+    const hash = user.password_hash || user.passwordHash;
+    if (!hash) {
+      return res.status(401).json({ error: 'Вход по паролю для этого аккаунта недоступен' });
+    }
+    const match = await bcrypt.compare(String(password), hash);
+    if (!match) {
+      return res.status(401).json({ error: 'Неверный номер телефона (или email) или пароль' });
+    }
+    const token = generateAppToken();
+    appTokenStore.set(token, {
+      userId: user.id,
+      expiresAt: Date.now() + 24 * 60 * 60 * 1000,
     });
-  });
+    await persistAppTokens();
+    const name =
+      user.name ||
+      user.full_name ||
+      [user.firstName || user.first_name, user.lastName || user.last_name].filter(Boolean).join(' ').trim() ||
+      user.phone ||
+      user.email?.split('@')[0] ||
+      'Специалист';
+    return res.json({
+      token,
+      user: {
+        id: String(user.id),
+        email: user.email || '',
+        phone: user.phone || '',
+        name,
+      },
+    });
+  } catch (err) {
+    console.error('[Auth] /auth/login error:', err.message);
+    return res.status(500).json({ error: 'Ошибка входа' });
+  }
+});
+
+// Выход (токен остаётся валидным до истечения — клиент удаляет его локально)
+router.post('/logout', (req, res) => {
+  res.json({ ok: true });
 });
 
 // Middleware: установить req.user из Bearer-токена (для приложения Flutter)
@@ -466,15 +386,16 @@ router.get('/me', (req, res) => {
     }
     
     console.log('[Auth] /auth/me success for user', String(user.id));
-    return res.json({ 
-      user: { 
-        id: String(user.id), 
-        email: user.email || '', 
-        name: finalName, 
-        picture: avatarUrl, // Для обратной совместимости
-        avatar: avatarUrl, // Новое поле
-        createdAt 
-      } 
+    return res.json({
+      user: {
+        id: String(user.id),
+        email: user.email || '',
+        phone: user.phone || '',
+        name: finalName,
+        picture: avatarUrl,
+        avatar: avatarUrl,
+        createdAt,
+      },
     });
   }
   console.warn(
