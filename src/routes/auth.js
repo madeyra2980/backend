@@ -65,13 +65,14 @@ export async function loadAppTokens() {
 
 const BACKEND_URL = (process.env.BACKEND_URL || 'https://backend-2-jbcd.onrender.com').replace(/\/$/, '');
 
-/** Отправить письмо с ссылкой верификации или вывести ссылку в консоль */
+/** Отправить письмо с ссылкой верификации (Gmail и др.) или вывести ссылку в консоль */
 async function sendVerificationEmail(email, verifyUrl) {
   try {
     const nodemailer = (await import('nodemailer')).default;
+    const port = parseInt(process.env.SMTP_PORT || '587', 10);
     const transport = nodemailer.createTransport({
       host: process.env.SMTP_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.SMTP_PORT || '587', 10),
+      port,
       secure: process.env.SMTP_SECURE === '1',
       auth: process.env.SMTP_USER ? {
         user: process.env.SMTP_USER,
@@ -87,7 +88,8 @@ async function sendVerificationEmail(email, verifyUrl) {
     });
     console.log('[Auth] Verification email sent to', email);
   } catch (err) {
-    console.log('[Auth] SMTP not configured or failed, verification link (copy to browser):', verifyUrl);
+    console.error('[Auth] SMTP error:', err.message);
+    console.log('[Auth] Verification link (copy to browser):', verifyUrl);
   }
 }
 
