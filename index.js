@@ -135,7 +135,8 @@ loadAppTokens().then(() => {
     console.log('DB_NAME:', process.env.DB_NAME);
     console.log('DB_USER:', process.env.DB_USER);
     console.log('DB_PASSWORD:', process.env.DB_PASSWORD);
-    console.log(`🚀 Server running on ${BACKEND_URL}`);
+    const serverUrl = IS_PRODUCTION ? BACKEND_URL : `http://localhost:${PORT}`;
+    console.log(`🚀 Server running on ${serverUrl}`);
     console.log(`📱 Frontend URL: ${FRONTEND_URL}`);
     console.log(`🔐 Session secret: ${process.env.SESSION_SECRET ? 'configured' : 'using default'}`);
     startNgrok(PORT);

@@ -8,15 +8,15 @@ import { filterAllowedSpecialtyIds, SPECIALTIES } from '../constants/specialties
 
 const router = Router();
 
-// Жёстко заданные доступы администратора
+// Доступы администратора только из env (ADMIN_PASSWORD не должен быть по умолчанию в коде)
 const ADMIN_LOGIN = process.env.ADMIN_LOGIN || 'komek-2026';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Saken-Madik2002';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
 
 // Вход в админ-панель: создаём сессию администратора
 router.post('/login', (req, res) => {
   const { login, password } = req.body || {};
 
-  if (login === ADMIN_LOGIN && password === ADMIN_PASSWORD) {
+  if (ADMIN_PASSWORD && login === ADMIN_LOGIN && password === ADMIN_PASSWORD) {
     req.session.isAdmin = true;
     req.session.adminLoggedInAt = new Date().toISOString();
     return res.json({ ok: true });
