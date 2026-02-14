@@ -8,7 +8,8 @@ const pool = new Pool({
     rejectUnauthorized: false
   }
 });
-
+//
+console.log('DATABASE_URL', process.env.DATABASE_URL);
 export { pool };
 
 export async function query(text, params) {
